@@ -302,11 +302,12 @@ function renderAnimation() {
       }
 
       if (z.applyOnce) {
+        console.log('z');
         APPLY_FORCES.splice(i, 1);
       }
     }
 
-    console.log(toApply, renderAnimationId, 'toApply');
+    console.log(toApply, APPLY_FORCES[0], 'toApply');
 
     toApply && applyForce(newPageGeo.geometry, toApply);
   }
@@ -332,11 +333,14 @@ window.addEventListener('keydown', (e) => {
     APPLY_FORCES.push({
       applyOnce: false,
       apply: applyGravity(
-        newPageGeo.geometry,
+        newPageGeo.geometry.attributes.position,
+        newPageGeo.geometry.index.array,
+        newPageGeo.geometry.attributes.position.array,
         GRAVITY,
         newPageGeo.geometry.userData.mass
       ),
     });
+
     // APPLY_FORCES.push({
     //   applyOnce: false,
     //   apply: applyAntiGravity(
@@ -354,8 +358,10 @@ window.addEventListener('keydown', (e) => {
     APPLY_FORCES.push({
       applyOnce: true,
       apply: applyLeftPush(
-        newPageGeo.geometry,
-        0,
+        newPageGeo.geometry.attributes.position,
+        grabbedIndexes,
+        grabbedVertices,
+        0.001,
         newPageGeo.geometry.userData.mass
       ),
     });

@@ -1,5 +1,5 @@
-export function applyGravity(indexes, vertices, force = 0, mass = 0) {
-  if (!indexes || !vertices || !force || !mass) return null;
+export function applyGravity(pos, indexes, vertices, force = 0, mass = 0) {
+  if (!pos || !indexes || !vertices || !force || !mass) return null;
 
   const acc = force / mass,
     maxVel = 0.1;
@@ -12,9 +12,13 @@ export function applyGravity(indexes, vertices, force = 0, mass = 0) {
     vel += acc;
 
     // create a new Float32Array for updated positions
-    const result = new Float32Array(vertices.size * 3);
-    for (let i = 0; i < vertices.size; i++) {
+    const result = new Float32Array(vertices.length * 3);
+    for (let i = 0; i < vertices.length; i++) {
       const currentZ = pos.getZ(i);
+      /** rules of gravity
+       * all the Z should not be less than 0.
+       * 0 is the imaginary plane.
+       */
       if (currentZ <= 0) continue;
 
       inMotion = true;
@@ -33,32 +37,36 @@ export function applyGravity(indexes, vertices, force = 0, mass = 0) {
   };
 }
 
-export function applyLeftPush(indexes, vertices, force = 0, mass = 0) {
-  if (!geometry || !force || !mass) return null;
+export function applyLeftPush(pos, indexes, vertices, force = 0, mass = 0) {
+  if (!pos || !indexes || !vertices || !force || !mass) return null;
 
   const acc = force / mass,
     maxVel = 0.05;
 
-  let vel = 0,
-    pos = geometry.attributes.position;
+  let vel = 0;
 
   return (refresh) => {
     // acc will automatically become less if the force of gravity is less than other,
-    vel = acc;
-
-    if (refresh) {
-      pos = geometry.attributes.position;
-    }
+    vel += acc;
 
     // create a new Float32Array for updated positions
     const result = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
-      const deltaX = 2 * maxVel;
-      const deltaZ = maxVel;
+      /** rules of a page
+       * Z cannot go below 0.
+       * Active page XYZ cannot be below any other page's XYZ, if it's on top.
+       *
+       * 0 is the imaginary plane.
+       */
+
+      if (!indexes.includes(i)) continue;
+
+      const deltaX = maxVel;
+      const deltaZ = maxVel / 2;
 
       result[i * 3] = -deltaX;
       result[i * 3 + 1] = 0;
-      result[i * 3 + 2] = -deltaZ;
+      result[i * 3 + 2] = deltaZ;
     }
 
     return result;
