@@ -89,9 +89,8 @@ class PageGeo {
       emissive: 0x222222, // Slight glow
     });
     // this.material.frustumCulled = false;
-
-    //
     this.plane = new THREE.Mesh(this.geometry, this.material);
+    //
     this.pagesMeta = []; // 0 - left, 1 - right
   }
   vertices() {
