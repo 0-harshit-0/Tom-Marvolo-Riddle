@@ -1,5 +1,5 @@
-export function applyGravity(pos, indexes, vertices, force = 0, mass = 0) {
-  if (!pos || !indexes || !vertices || !force || !mass) return null;
+export function applyGravity(pos, indices, vertices, force = 0, mass = 0) {
+  if (!pos || !indices || !vertices || !force || !mass) return null;
 
   const acc = force / mass,
     maxVel = 0.1;
@@ -8,12 +8,14 @@ export function applyGravity(pos, indexes, vertices, force = 0, mass = 0) {
 
   return (refresh) => {
     let inMotion = false;
+
     // acc will automatically become less if the force of gravity is less than other,
     vel += acc;
+    vel = Math.min(maxVel, vel);
 
     // create a new Float32Array for updated positions
-    const result = new Float32Array(vertices.length * 3);
-    for (let i = 0; i < vertices.length; i++) {
+    const result = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
       const currentZ = pos.getZ(i);
       /** rules of gravity
        * all the Z should not be less than 0.
@@ -22,7 +24,7 @@ export function applyGravity(pos, indexes, vertices, force = 0, mass = 0) {
       if (currentZ <= 0) continue;
 
       inMotion = true;
-      const deltaZ = Math.min(maxVel, vel); //Math.max(0, currentZ - vel);
+      const deltaZ = vel; //Math.max(0, currentZ - vel);
 
       result[i * 3] = 0;
       result[i * 3 + 1] = 0;
@@ -37,32 +39,32 @@ export function applyGravity(pos, indexes, vertices, force = 0, mass = 0) {
   };
 }
 
-export function applyLeftPush(pos, indexes, vertices, force = 0, mass = 0) {
-  if (!pos || !indexes || !vertices || !force || !mass) return null;
+export function applyLeftPush(pos, indices, vertices, force = 0, mass = 0) {
+  if (!pos || !indices || !vertices || !force || !mass) return null;
 
   const acc = force / mass,
-    maxVel = 0.05;
+    maxVel = 0.5;
 
   let vel = 0;
 
   return (refresh) => {
     // acc will automatically become less if the force of gravity is less than other,
     vel += acc;
+    vel = Math.min(maxVel, vel);
 
     // create a new Float32Array for updated positions
     const result = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
       /** rules of a page
-       * Z cannot go below 0.
+       * Z cannot go below 0. (Thats the imaginary plane)
        * Active page XYZ cannot be below any other page's XYZ, if it's on top.
        *
-       * 0 is the imaginary plane.
        */
 
-      if (!indexes.includes(i)) continue;
+      if (!indices.includes(i)) continue;
 
-      const deltaX = maxVel;
-      const deltaZ = maxVel / 2;
+      const deltaX = vel;
+      const deltaZ = vel / 2;
 
       result[i * 3] = -deltaX;
       result[i * 3 + 1] = 0;
@@ -73,43 +75,90 @@ export function applyLeftPush(pos, indexes, vertices, force = 0, mass = 0) {
   };
 }
 
-export function applyAntiGravity(geometry, force = 0, mass = 0, ceilingZ = 10) {
-  if (!geometry || !force || !mass) return null;
+export function applyDistanceConstraints(
+  geometry,
+  pos,
+  indices,
+  vertices,
+  force = 0,
+  mass = 0,
+  pinned = new Set(),
+  iterations = 8
+) {
+  if (!pos || !indices || !vertices || !force || !mass) return null;
 
-  const maxVel = 0.1,
-    acc = force / mass;
+  // Build constraints once
+  if (!geometry.userData.constraints) {
+    const constraints = [];
+    const edges = new Set();
 
-  let original = geometry.userData.original,
-    pos = geometry.attributes.position,
-    vel = 0;
+    for (let i = 0; i < indices.length; i += 3) {
+      const a = indices[i];
+      const b = indices[i + 1];
+      const c = indices[i + 2];
 
-  return (refresh) => {
-    let inMotion = false;
-    vel += acc;
+      const pairs = [
+        [a, b],
+        [b, c],
+        [c, a],
+      ];
 
-    if (refresh) {
-      original = geometry.userData.original;
-      pos = geometry.attributes.position;
+      for (const [i1, i2] of pairs) {
+        const key = i1 < i2 ? `${i1}_${i2}` : `${i2}_${i1}`;
+        if (edges.has(key)) continue;
+        edges.add(key);
+
+        const dx = pos.getX(i2) - pos.getX(i1);
+        const dy = pos.getY(i2) - pos.getY(i1);
+        const dz = pos.getZ(i2) - pos.getZ(i1);
+        const restLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        constraints.push({ i1, i2, restLength });
+      }
     }
 
-    const result = new Float32Array(pos.count * 3);
-    for (let i = 0; i < pos.count; i++) {
-      const currentZ = pos.getZ(i);
-      if (currentZ >= ceilingZ) continue;
+    geometry.userData.constraints = constraints;
+  }
 
-      inMotion = true;
-      const deltaZ = Math.min(maxVel, vel); //Math.min(ceilingZ, currentZ + vel);
+  return () => {
+    const constraints = geometry.userData.constraints;
 
-      result[i * 3] = 0;
-      result[i * 3 + 1] = 0;
-      result[i * 3 + 2] = deltaZ; //nextZ - original[i * 3 + 2];
+    for (let k = 0; k < iterations; k++) {
+      for (const { i1, i2, restLength } of constraints) {
+        if (pinned.has(i1) && pinned.has(i2)) continue;
+
+        const x1 = pos.getX(i1);
+        const y1 = pos.getY(i1);
+        const z1 = pos.getZ(i1);
+
+        const x2 = pos.getX(i2);
+        const y2 = pos.getY(i2);
+        const z2 = pos.getZ(i2);
+
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const dz = z2 - z1;
+
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist === 0) continue;
+
+        const diff = (dist - restLength) / dist;
+        const corrX = dx * 0.5 * diff;
+        const corrY = dy * 0.5 * diff;
+        const corrZ = dz * 0.5 * diff;
+
+        if (!pinned.has(i1)) {
+          pos.setXYZ(i1, x1 + corrX, y1 + corrY, z1 + corrZ);
+        }
+
+        if (!pinned.has(i2)) {
+          pos.setXYZ(i2, x2 - corrX, y2 - corrY, z2 - corrZ);
+        }
+      }
     }
 
-    if (!inMotion) {
-      vel = 0;
-    }
-
-    return result;
+    pos.needsUpdate = true;
+    geometry.computeVertexNormals();
   };
 }
 

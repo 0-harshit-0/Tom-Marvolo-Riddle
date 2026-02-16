@@ -88,13 +88,12 @@ class PageGeo {
       // map: new THREE.TextureLoader().load('data:image/png;base64,iVBORw0KG...'),
       emissive: 0x222222, // Slight glow
     });
+
     // this.material.frustumCulled = false;
     this.plane = new THREE.Mesh(this.geometry, this.material);
+
     //
     this.pagesMeta = []; // 0 - left, 1 - right
-  }
-  vertices() {
-    return this.geometry.attributes.position;
   }
   addMetas(metas) {
     metas.forEach((z) => {

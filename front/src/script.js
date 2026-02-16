@@ -2,7 +2,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { Book, Page, PageGeo } from '/src/classes.js';
-import { applyGravity, applyForce, applyLeftPush } from '/src/phy.js';
+import {
+  applyForce,
+  applyGravity,
+  applyLeftPush,
+  applyDistanceConstraints,
+} from '/src/phy.js';
 import { randomId } from '/src/utils.js';
 
 // canvas
@@ -326,9 +331,22 @@ window.addEventListener('keydown', (e) => {
   }
   console.log(e.key);
   if (e.key == 'b') {
-    newPageGeo.geometry.translate(0, 0, 5);
+    // newPageGeo.geometry.translate(0, 0, 5);
+    APPLY_FORCES.push({
+      applyOnce: false,
+      apply: applyDistanceConstraints(
+        newPageGeo.geometry,
+        newPageGeo.geometry.attributes.position,
+        newPageGeo.geometry.index.array,
+        newPageGeo.geometry.attributes.position.array,
+        1,
+        newPageGeo.geometry.userData.mass,
+        new Set(grabbedIndexes),
+        10
+      ),
+    });
   }
-  if (e.key == 'a') {
+  if (e.key == 'g') {
     // apply gravity on each render
     APPLY_FORCES.push({
       applyOnce: false,
@@ -353,7 +371,7 @@ window.addEventListener('keydown', (e) => {
     console.log(APPLY_FORCES);
     // animationManager();
   }
-  if (e.key == 'q') {
+  if (e.key == 'ArrowLeft') {
     console.log(grabbedVertices, grabbedIndexes);
     APPLY_FORCES.push({
       applyOnce: true,
@@ -361,7 +379,7 @@ window.addEventListener('keydown', (e) => {
         newPageGeo.geometry.attributes.position,
         grabbedIndexes,
         grabbedVertices,
-        0.001,
+        0.01,
         newPageGeo.geometry.userData.mass
       ),
     });
