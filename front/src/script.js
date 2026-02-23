@@ -6,9 +6,11 @@ import {
   applyForce,
   applyGravity,
   applyLeftPush,
+  applyRightPush,
   applyDistanceConstraints,
 } from '/src/phy.js';
 import { randomId } from '/src/utils.js';
+import { applyClothDistanceConstraints } from './phy';
 
 // canvas
 const canvas = document.querySelector('#canvas');
@@ -17,7 +19,7 @@ canvas.height = innerHeight;
 
 const MOUSE_MASS = 10; // basically infinite, cause mouse is the GOD xD
 const APPLY_FORCES = [];
-const GRAVITY = 0.01;
+const GRAVITY = 0.001;
 
 // THREE.Object3D.DefaultUp = new THREE.Vector3(0, 0, 1);
 const scene = new THREE.Scene();
@@ -139,7 +141,6 @@ scene.add(camera);
 //   renderFun();
 // });
 function renderFun() {
-  // console.log('r');
   renderer.render(scene, camera);
 }
 
@@ -152,20 +153,14 @@ controls.update();
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-const grabStartWorld = new THREE.Vector3();
 const grab = new THREE.Vector3(); // grabStart
 const grabRadius = 0.3;
-
-const dragPlane = new THREE.Plane();
-const dragWorld = new THREE.Vector3();
-const dragLocal = new THREE.Vector3();
 
 let grabbedIndexes = [];
 let grabbedVertices = new Map();
 
 let isDragging = false;
 let selectedObject = null;
-const minW = 0.3;
 
 // Convert mouse position to normalized device coordinates
 function updateMousePosition(event) {
@@ -183,48 +178,20 @@ canvas.addEventListener('mousedown', (event) => {
   isDragging = true;
   selectedObject = intersects[0].object;
 
-  const geometry = selectedObject.geometry;
-  const pos = geometry.attributes.position;
-  console.log(pos, pos.getX(0), geometry.index, 'pos');
-
-  // local grab point: the point that the mouse clicked on. Local: the point on the geometry
-  /**
-   * intersects[0].point = world hit position
-   worldToLocal() = convert to object space
-   local space = where vertex positions live
-   clone to avoid mutation bugs
-   */
-  const localPoint = selectedObject.worldToLocal(intersects[0].point.clone());
-  grab.copy(localPoint);
-  // world grab point
-  grabStartWorld.copy(intersects[0].point);
-  console.log(grabStartWorld, 'wg');
-  console.log(grab, 'lg');
-
-  // drag plane faces camera
-  dragPlane.setFromNormalAndCoplanarPoint(
-    camera.getWorldDirection(new THREE.Vector3()).negate(),
-    grabStartWorld
-  );
+  const pos = selectedObject.geometry.attributes.position;
+  console.log(pos, pos.getX(0), selectedObject.geometry.index, 'pos');
 
   grabbedIndexes.length = 0;
   grabbedVertices.clear();
+
+  const localPoint = selectedObject.worldToLocal(intersects[0].point.clone());
+  grab.copy(localPoint);
 
   // select vertices within radius// sqrt((x2 - x1)^2 + (y2 - y1)^2)
   for (let i = 0; i < pos.count; i++) {
     const dx = pos.getX(i) - grab.x;
     const dy = pos.getY(i) - grab.y;
     const dz = pos.getZ(i) - grab.z;
-
-    // const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-    // const t = Math.min(dist / grabRadius, 1);
-    // const weight = minW + (0.4 - minW) * (0.4 - t);
-
-    // const t = dist / grabRadius;
-    // const clamped = Math.min(Math.max(t, 0), 1);
-    // const weight = 1 - clamped;
-    // const weight = 1 - clamped * clamped * (3 - 2 * clamped);
 
     if (dx * dx + dy * dy + dz * dz <= grabRadius * grabRadius) {
       grabbedIndexes.push(i);
@@ -243,38 +210,7 @@ canvas.addEventListener('mousedown', (event) => {
 
 canvas.addEventListener('mousemove', (event) => {
   if (!isDragging || !selectedObject) return;
-
-  updateMousePosition(event);
-  raycaster.setFromCamera(mouse, camera);
-
-  // intersect mouse ray with drag plane
-  if (!raycaster.ray.intersectPlane(dragPlane, dragWorld)) return;
-
-  // compute world delta
-  dragWorld.sub(grabStartWorld);
-
-  // convert to local space
-  dragLocal.copy(dragWorld);
-  selectedObject.worldToLocal(dragLocal);
-
-  const pos = selectedObject.geometry.attributes.position;
-
-  // apply to original positions
-  for (const i of grabbedIndexes) {
-    const o = grabbedVertices.get(i);
-    pos.setXYZ(
-      i,
-      o.x + dragLocal.x,
-      o.y + dragLocal.y,
-      o.z + dragLocal.z
-      // o.x + dragLocal.x * o.weight,
-      // o.y + dragLocal.y * o.weight,
-      // o.z + dragLocal.z * o.weight
-    );
-  }
-
-  pos.needsUpdate = true;
-  selectedObject.geometry.computeVertexNormals();
+  console.log(selectedObject);
 });
 
 canvas.addEventListener('mouseup', () => {
@@ -313,12 +249,10 @@ function renderAnimation() {
     }
 
     console.log(toApply, APPLY_FORCES[0], 'toApply');
-
     toApply && applyForce(newPageGeo.geometry, toApply);
   }
 
   renderFun();
-
   renderAnimationId = requestAnimationFrame(renderAnimation);
 }
 renderAnimation();
@@ -358,18 +292,7 @@ window.addEventListener('keydown', (e) => {
         newPageGeo.geometry.userData.mass
       ),
     });
-
-    // APPLY_FORCES.push({
-    //   applyOnce: false,
-    //   apply: applyAntiGravity(
-    //     newPageGeo.geometry,
-    //     0.0001,
-    //     newPageGeo.geometry.userData.mass
-    //   ),
-    // });
-
     console.log(APPLY_FORCES);
-    // animationManager();
   }
   if (e.key == 'ArrowLeft') {
     console.log(grabbedVertices, grabbedIndexes);
@@ -379,7 +302,18 @@ window.addEventListener('keydown', (e) => {
         newPageGeo.geometry.attributes.position,
         grabbedIndexes,
         grabbedVertices,
-        0.01,
+        0.5,
+        newPageGeo.geometry.userData.mass
+      ),
+    });
+  } else if (e.key == 'ArrowRight') {
+    APPLY_FORCES.push({
+      applyOnce: true,
+      apply: applyRightPush(
+        newPageGeo.geometry.attributes.position,
+        grabbedIndexes,
+        grabbedVertices,
+        0.5,
         newPageGeo.geometry.userData.mass
       ),
     });

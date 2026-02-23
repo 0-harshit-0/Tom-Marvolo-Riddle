@@ -2,7 +2,7 @@ export function applyGravity(pos, indices, vertices, force = 0, mass = 0) {
   if (!pos || !indices || !vertices || !force || !mass) return null;
 
   const acc = force / mass,
-    maxVel = 0.1;
+    maxVel = 0.02;
 
   let vel = 0;
 
@@ -74,8 +74,43 @@ export function applyLeftPush(pos, indices, vertices, force = 0, mass = 0) {
     return result;
   };
 }
+export function applyRightPush(pos, indices, vertices, force = 0, mass = 0) {
+  if (!pos || !indices || !vertices || !force || !mass) return null;
 
-export function applyDistanceConstraints(
+  const acc = force / mass,
+    maxVel = 0.5;
+
+  let vel = 0;
+
+  return (refresh) => {
+    // acc will automatically become less if the force of gravity is less than other,
+    vel += acc;
+    vel = Math.min(maxVel, vel);
+
+    // create a new Float32Array for updated positions
+    const result = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      /** rules of a page
+       * Z cannot go below 0. (Thats the imaginary plane)
+       * Active page XYZ cannot be below any other page's XYZ, if it's on top.
+       *
+       */
+
+      if (!indices.includes(i)) continue;
+
+      const deltaX = vel;
+      const deltaZ = vel / 2;
+
+      result[i * 3] = deltaX;
+      result[i * 3 + 1] = 0;
+      result[i * 3 + 2] = deltaZ;
+    }
+
+    return result;
+  };
+}
+
+export function applyClothDistanceConstraints(
   geometry,
   pos,
   indices,
@@ -155,6 +190,120 @@ export function applyDistanceConstraints(
           pos.setXYZ(i2, x2 - corrX, y2 - corrY, z2 - corrZ);
         }
       }
+    }
+
+    pos.needsUpdate = true;
+    geometry.computeVertexNormals();
+  };
+}
+
+export function applyDistanceConstraints(
+  geometry,
+  pos,
+  indices,
+  vertices,
+  force = 0,
+  mass = 0,
+
+  pinned = new Set(),
+  iterations = 8,
+  stiffness = 0.6,
+  bendStiffness = 0.6
+) {
+  if (!pos || !indices || !vertices || !force || !mass) return null;
+
+  // Build constraints once
+  if (!geometry.userData.constraints) {
+    const structural = [];
+    const shear = [];
+    const bending = [];
+    const edges = new Set();
+
+    const addConstraint = (list, i1, i2) => {
+      const key = i1 < i2 ? `${i1}_${i2}` : `${i2}_${i1}`;
+      if (edges.has(key)) return;
+      edges.add(key);
+
+      const dx = pos.getX(i2) - pos.getX(i1);
+      const dy = pos.getY(i2) - pos.getY(i1);
+      const dz = pos.getZ(i2) - pos.getZ(i1);
+      const rest = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      list.push({ i1, i2, rest });
+    };
+
+    // structural + shear
+    for (let i = 0; i < indices.length; i += 3) {
+      const a = indices[i];
+      const b = indices[i + 1];
+      const c = indices[i + 2];
+
+      addConstraint(structural, a, b);
+      addConstraint(structural, b, c);
+      addConstraint(structural, c, a);
+    }
+
+    // bending constraints (2-edge neighbors)
+    const vertexCount = pos.count;
+    for (let i = 0; i < vertexCount; i++) {
+      for (let j = i + 1; j < vertexCount; j++) {
+        const dx = pos.getX(j) - pos.getX(i);
+        const dy = pos.getY(j) - pos.getY(i);
+        const dz = pos.getZ(j) - pos.getZ(i);
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        // only medium-distance neighbors
+        if (dist > 0.5 && dist < 1.5) {
+          bending.push({ i1: i, i2: j, rest: dist });
+        }
+      }
+    }
+
+    geometry.userData.constraints = {
+      structural,
+      bending,
+    };
+  }
+
+  return () => {
+    const { structural, bending } = geometry.userData.constraints;
+
+    const solve = (constraints, stiff) => {
+      for (const { i1, i2, rest } of constraints) {
+        if (pinned.has(i1) && pinned.has(i2)) continue;
+
+        const x1 = pos.getX(i1);
+        const y1 = pos.getY(i1);
+        const z1 = pos.getZ(i1);
+
+        const x2 = pos.getX(i2);
+        const y2 = pos.getY(i2);
+        const z2 = pos.getZ(i2);
+
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const dz = z2 - z1;
+
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist === 0) continue;
+
+        const diff = (dist - rest) / dist;
+        const corrX = dx * 0.5 * diff * stiff;
+        const corrY = dy * 0.5 * diff * stiff;
+        const corrZ = dz * 0.5 * diff * stiff;
+
+        if (!pinned.has(i1)) {
+          pos.setXYZ(i1, x1 + corrX, y1 + corrY, z1 + corrZ);
+        }
+        if (!pinned.has(i2)) {
+          pos.setXYZ(i2, x2 - corrX, y2 - corrY, z2 - corrZ);
+        }
+      }
+    };
+
+    for (let k = 0; k < iterations; k++) {
+      solve(structural, stiffness);
+      solve(bending, bendStiffness);
     }
 
     pos.needsUpdate = true;
