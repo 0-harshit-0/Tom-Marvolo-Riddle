@@ -8,9 +8,9 @@ import {
   applyLeftPush,
   applyRightPush,
   applyDistanceConstraints,
+  applyPageSpringForces,
 } from '/src/phy.js';
 import { randomId } from '/src/utils.js';
-import { applyClothDistanceConstraints } from './phy';
 
 // canvas
 const canvas = document.querySelector('#canvas');
@@ -224,9 +224,12 @@ canvas.addEventListener('mouseup', () => {
 
 // animation frame ================================
 
-let renderAnimationId;
+let renderAnimationId,
+  toUpdate = false;
 function renderAnimation() {
   if (APPLY_FORCES.length) {
+    toUpdate = false;
+
     let toApply = new Float32Array(
       newPageGeo.geometry.attributes.position.count * 3
     );
@@ -235,21 +238,23 @@ function renderAnimation() {
       const z = APPLY_FORCES[i];
 
       const f = z.apply(true);
-      if (!f) continue;
+      if (!f || !f.updated) continue;
       console.log(f, 'f');
 
+      toUpdate = true;
       for (let i = 0; i < toApply.length; i++) {
-        toApply[i] += f[i];
+        toApply[i] += f.result[i];
       }
 
       if (z.applyOnce) {
-        console.log('z');
         APPLY_FORCES.splice(i, 1);
       }
     }
 
-    console.log(toApply, APPLY_FORCES[0], 'toApply');
-    toApply && applyForce(newPageGeo.geometry, toApply);
+    if (toApply && toUpdate) {
+      console.log(toApply, APPLY_FORCES[0], 'toApply');
+      applyForce(newPageGeo.geometry, toApply);
+    }
   }
 
   renderFun();
@@ -268,17 +273,35 @@ window.addEventListener('keydown', (e) => {
     // newPageGeo.geometry.translate(0, 0, 5);
     APPLY_FORCES.push({
       applyOnce: false,
-      apply: applyDistanceConstraints(
+
+      apply: applyPageSpringForces(
         newPageGeo.geometry,
         newPageGeo.geometry.attributes.position,
         newPageGeo.geometry.index.array,
         newPageGeo.geometry.attributes.position.array,
-        1,
+        1, // force unused here
         newPageGeo.geometry.userData.mass,
-        new Set(grabbedIndexes),
-        10
+        new Set(), // dynamic pinned set, can be replaced/updated
+        1, // iterations (spring accumulation)
+        180, // stiffness
+        40, // bendStiffness
+        0.2, // damping
+        1 / 60,
+        1.2
       ),
     });
+    //
+    // APPLY_FORCES.push({
+    //   applyOnce: false,
+    //   apply: applyDistanceConstraints(
+    //     newPageGeo.geometry,
+    //     newPageGeo.geometry.attributes.position,
+    //     newPageGeo.geometry.index.array,
+    //     newPageGeo.geometry.attributes.position.array,
+    //     1,
+    //     newPageGeo.geometry.userData.mass
+    //   ),
+    // });
   }
   if (e.key == 'g') {
     // apply gravity on each render
