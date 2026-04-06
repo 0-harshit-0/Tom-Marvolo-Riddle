@@ -63,7 +63,7 @@ class Page {
   }
 }
 class PageGeo {
-  constructor(id, width, height, color = 0xfafafa, wire = true) {
+  constructor(id, width, height, color = 0xfafafa, wire = false) {
     /**
      */
     this.id = id;

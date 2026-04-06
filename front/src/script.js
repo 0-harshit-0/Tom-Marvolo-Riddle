@@ -126,7 +126,7 @@ ball.position.set(0, 0, 0); // top-left-up all positive
 scene.add(ball);
 
 const newPageGeo = new PageGeo(randomId(), 2, 4);
-newPageGeo.geometry.translate(0, 0, 5);
+newPageGeo.geometry.translate(0, 0, 1);
 // newPageGeo.plane.position.set(0, 0, 5);
 scene.add(newPageGeo.plane);
 
@@ -146,8 +146,6 @@ function renderFun() {
 
 // initBook();
 controls.update();
-
-// utils
 
 // ray casting =================================
 const raycaster = new THREE.Raycaster();
@@ -211,6 +209,8 @@ canvas.addEventListener('mousedown', (event) => {
 canvas.addEventListener('mousemove', (event) => {
   if (!isDragging || !selectedObject) return;
   console.log(selectedObject);
+
+  renderFun();
 });
 
 canvas.addEventListener('mouseup', () => {
@@ -226,10 +226,15 @@ canvas.addEventListener('mouseup', () => {
 
 let renderAnimationId,
   toUpdate = false;
+let isLooping = false,
+  lastActivityTime = Date.now();
+const IDLE_TIMEOUT = 6000; // 3 seconds
+
 function renderAnimation() {
+  let physicsStillMoving = false;
+
   if (APPLY_FORCES.length) {
     toUpdate = false;
-
     let toApply = new Float32Array(
       newPageGeo.geometry.attributes.position.count * 3
     );
@@ -238,29 +243,46 @@ function renderAnimation() {
       const z = APPLY_FORCES[i];
 
       const f = z.apply(true);
-      if (!f || !f.updated) continue;
-      console.log(f, 'f');
-
-      toUpdate = true;
-      for (let i = 0; i < toApply.length; i++) {
-        toApply[i] += f.result[i];
-      }
-
       if (z.applyOnce) {
         APPLY_FORCES.splice(i, 1);
+      }
+
+      if (!f || !f.updated) continue;
+
+      toUpdate = true;
+      physicsStillMoving = true;
+
+      for (let i = 0; i < toApply.length; i++) {
+        toApply[i] += f.result[i];
       }
     }
 
     if (toApply && toUpdate) {
-      console.log(toApply, APPLY_FORCES[0], 'toApply');
       applyForce(newPageGeo.geometry, toApply);
     }
   }
 
   renderFun();
+  const timeSinceActivity = Date.now() - lastActivityTime;
+
+  if (timeSinceActivity > IDLE_TIMEOUT) {
+    isLooping = false;
+    console.log('Loop Paused to save CPU');
+    cancelAnimationFrame(renderAnimationId);
+    return; // Stop the requestAnimationFrame chain
+  }
+
   renderAnimationId = requestAnimationFrame(renderAnimation);
 }
-renderAnimation();
+function wakeUp() {
+  lastActivityTime = Date.now();
+  if (!isLooping) {
+    isLooping = true;
+    renderAnimation();
+    console.log('Loop Started');
+  }
+}
+wakeUp();
 
 window.addEventListener('keydown', (e) => {
   // console.log(e.key);
@@ -268,8 +290,9 @@ window.addEventListener('keydown', (e) => {
     console.log(1);
     cancelAnimationFrame(renderAnimationId);
   }
-  console.log(e.key);
   if (e.key == 'b') {
+    wakeUp();
+
     // newPageGeo.geometry.translate(0, 0, 5);
     APPLY_FORCES.push({
       applyOnce: false,
@@ -282,12 +305,12 @@ window.addEventListener('keydown', (e) => {
         1, // force unused here
         newPageGeo.geometry.userData.mass,
         new Set(), // dynamic pinned set, can be replaced/updated
-        1, // iterations (spring accumulation)
-        180, // stiffness
-        40, // bendStiffness
-        0.2, // damping
+        2, // iterations (spring accumulation)
+        100, // stiffness
+        5, // bendStiffness
+        0.8, // damping
         1 / 60,
-        1.2
+        5
       ),
     });
     //
@@ -304,6 +327,8 @@ window.addEventListener('keydown', (e) => {
     // });
   }
   if (e.key == 'g') {
+    wakeUp();
+
     // apply gravity on each render
     APPLY_FORCES.push({
       applyOnce: false,
@@ -318,25 +343,28 @@ window.addEventListener('keydown', (e) => {
     console.log(APPLY_FORCES);
   }
   if (e.key == 'ArrowLeft') {
+    wakeUp();
+
     console.log(grabbedVertices, grabbedIndexes);
     APPLY_FORCES.push({
       applyOnce: true,
       apply: applyLeftPush(
-        newPageGeo.geometry.attributes.position,
+        newPageGeo.geometry,
         grabbedIndexes,
-        grabbedVertices,
-        0.5,
+        0.3,
         newPageGeo.geometry.userData.mass
       ),
     });
   } else if (e.key == 'ArrowRight') {
+    wakeUp();
+
     APPLY_FORCES.push({
       applyOnce: true,
       apply: applyRightPush(
         newPageGeo.geometry.attributes.position,
         grabbedIndexes,
         grabbedVertices,
-        0.5,
+        0.1,
         newPageGeo.geometry.userData.mass
       ),
     });

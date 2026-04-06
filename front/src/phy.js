@@ -2,7 +2,7 @@ export function applyGravity(pos, indices, vertices, force = 0, mass = 0) {
   if (!pos || !indices || !vertices || !force || !mass) return null;
 
   const acc = force / mass,
-    maxVel = 0.03;
+    maxVel = 1;
 
   let vel = 0;
 
@@ -39,39 +39,28 @@ export function applyGravity(pos, indices, vertices, force = 0, mass = 0) {
   };
 }
 
-export function applyLeftPush(pos, indices, vertices, force = 0, mass = 0) {
-  if (!pos || !indices || !vertices || !force || !mass) return null;
+export function applyLeftPush(geometry, indices, force = 0.5) {
+  if (!geometry || !indices.length) return null;
 
-  const acc = force / mass,
-    maxVel = 0.5;
+  const velocities = geometry.userData.springVelocities;
+  const hingeX = geometry.userData.hingeX; // Grab the hinge X
+  const pos = geometry.attributes.position;
 
-  let vel = 0;
+  return () => {
+    for (const i of indices) {
+      const currentX = pos.getX(i);
 
-  return (refresh) => {
-    // acc will automatically become less if the force of gravity is less than other,
-    vel += acc;
-    vel = Math.min(maxVel, vel);
+      // Calculate Z direction:
+      // If vertex is to the right of hinge, push UP (+).
+      // If vertex is to the left of hinge, push DOWN (-).
+      const zDirection = currentX - hingeX > 0 ? 1 : -1;
 
-    // create a new Float32Array for updated positions
-    const result = new Float32Array(pos.count * 3);
-    for (let i = 0; i < pos.count; i++) {
-      /** rules of a page
-       * Z cannot go below 0. (Thats the imaginary plane)
-       * Active page XYZ cannot be below any other page's XYZ, if it's on top.
-       *
-       */
-
-      if (!indices.includes(i)) continue;
-
-      const deltaX = vel;
-      const deltaZ = vel / 2;
-
-      result[i * 3] = -deltaX;
-      result[i * 3 + 1] = 0;
-      result[i * 3 + 2] = deltaZ;
+      // Inject velocity as an Impulse
+      velocities[i * 3] -= force; // Move Left
+      velocities[i * 3 + 2] += force * zDirection; // Directional Lift
     }
 
-    return { updated: 1, result };
+    return { updated: false, result: null };
   };
 }
 export function applyRightPush(pos, indices, vertices, force = 0, mass = 0) {
@@ -505,7 +494,14 @@ export function applyPageSpringForces(
         const dz = pos.getZ(i2) - pos.getZ(i1);
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.0001;
 
-        const fMag = (dist - rest) * k;
+        // --- ADD SNIPPET HERE ---
+        const strain = dist / rest;
+        let fMag = (dist - rest) * k; // Use 'k' from the function parameter
+
+        if (strain > 1.05) {
+          fMag *= 10; // Rapidly increase resistance if stretching more than 5%
+        }
+
         const fx = (dx / dist) * fMag;
         const fy = (dy / dist) * fMag;
         const fz = (dz / dist) * fMag;
@@ -523,8 +519,10 @@ export function applyPageSpringForces(
       }
     };
 
-    solveSprings(springStructural, stiffness);
-    solveSprings(springBending, bendStiffness);
+    for (let i = 0; i < iterations; i++) {
+      solveSprings(springStructural, stiffness);
+      solveSprings(springBending, bendStiffness);
+    }
 
     // 3. Integration & Damping
     const result = new Float32Array(count * 3);
