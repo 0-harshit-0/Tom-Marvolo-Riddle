@@ -39,6 +39,32 @@ export function applyGravity(pos, indices, vertices, force = 0, mass = 0) {
   };
 }
 
+// phy.js - applyMouseDrag
+export function applyMouseDrag(
+  geometry,
+  grabbedIndexes,
+  deltaX,
+  deltaY,
+  deltaZ,
+  strength = 1
+) {
+  if (!geometry || !grabbedIndexes.length) return;
+
+  const velocities = geometry.userData.springVelocities;
+  if (!velocities) return;
+
+  const hingeX = geometry.userData.hingeX;
+  const pos = geometry.attributes.position;
+
+  for (const i of grabbedIndexes) {
+    // vertices right of hinge lift up (+Z) when pushed left, drop when pushed right
+    const zDirection = pos.getX(i) - hingeX > 0 ? -1 : 1;
+
+    velocities[i * 3] += deltaX * strength;
+    velocities[i * 3 + 1] += deltaY * strength;
+    velocities[i * 3 + 2] += deltaX * zDirection * strength; // 👈 derived from deltaX, not deltaZ
+  }
+}
 export function applyLeftPush(geometry, indices, force = 0.5) {
   if (!geometry || !indices.length) return null;
 

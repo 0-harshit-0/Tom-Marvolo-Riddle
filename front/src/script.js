@@ -9,6 +9,7 @@ import {
   applyRightPush,
   applyDistanceConstraints,
   applyPageSpringForces,
+  applyMouseDrag,
 } from '/src/phy.js';
 import { randomId } from '/src/utils.js';
 
@@ -66,69 +67,55 @@ controls.target.set(0, 0, 0);
 const book1 = new Book(randomId());
 
 // pages setup ======================
-// function initBook() {
-//   const oldPages = [];
-//   for (let i = 0; i < 10; i++) {
-//     const newPage = new Page(randomId(), i);
-//     oldPages.push(newPage);
+function initBook() {
+  const oldPages = [];
+  for (let i = 0; i < 10; i++) {
+    const newPage = new Page(randomId(), i);
+    oldPages.push(newPage);
 
-//     if (oldPages.length == 2) {
-//       const newPageGeo = new PageGeo(randomId(), 2, 4);
+    if (oldPages.length == 2) {
+      const newPageGeo = new PageGeo(randomId(), 2, 4);
+      newPageGeo.addMetas(oldPages);
 
-//       const pos = newPageGeo.geometry.attributes.position;
+      console.log(newPageGeo.vertices().count, 'ver');
 
-//       newPageGeo.addMetas(oldPages);
-//       newPageGeo.geometry.userData.original = new Float32Array(pos.array);
-//       newPageGeo.geometry.userData.angle ??= 0;
-//       newPageGeo.geometry.userData.hingeX = Math.min(
-//         ...newPageGeo.geometry.userData.original.filter((_, i) => i % 3 === 0)
-//       );
-//       newPageGeo.geometry.userData.maxX = Math.max(
-//         ...newPageGeo.geometry.userData.original.filter((_, i) => i % 3 === 0)
-//       );
+      book1.addPageGeo(newPageGeo.id, newPageGeo);
+      oldPages.length = 0;
+    }
 
-//       console.log(newPageGeo.vertices().count, 'ver');
+    book1.addPage(newPage.id, newPage);
+  }
 
-//       book1.addPageGeo(newPageGeo.id, newPageGeo);
-//       oldPages.length = 0;
-//     }
+  let z = 0.05;
+  book1.pagesGeo.forEach((value, key, map) => {
+    // value.plane.position.set(0, 0, z);
+    value.geometry.translate(0, 0, z);
+    value.plane.castShadow = true; // Plane casts shadow
+    value.plane.receiveShadow = true; // Plane receives shadow
 
-//     book1.addPage(newPage.id, newPage);
-//   }
+    scene.add(value.plane);
 
-//   let z = 0.05;
-//   book1.pagesGeo.forEach((value, key, map) => {
-//     value.plane.position.set(0, 0, z);
-//     scene.add(value.plane);
-//     value.plane.castShadow = true; // Plane casts shadow
-//     value.plane.receiveShadow = true; // Plane receives shadow
-//     z -= 0.01;
-//   });
+    z -= 0.01;
+  });
 
-//   // book clip
-//   const geometry = new THREE.CylinderGeometry(0.05, 0.05, 4, 16);
-//   const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-//   const ball = new THREE.Mesh(geometry, material);
-//   ball.position.set(0, 2, 0.05); // top-left-up all positive
-//   scene.add(ball);
+  // book clip
+  const geometry = new THREE.CylinderGeometry(0.05, 0.05, 4, 16);
+  const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  const ball = new THREE.Mesh(geometry, material);
+  // ball.position.set(0, 0, 0); // top-left-up all positive
+  ball.position.set(0, 2, 0.05); // top-left-up all positive
+  scene.add(ball);
 
-//   // const iterator = book1.pagesGeo.keys();
-//   // book1.addActivePageGeo(iterator.next().value);
-//   // book1.addActivePageGeo(iterator.next().value);
-//   // console.log(book1.info(), oldPages);
-// }
-
-// book clip
-const ballgeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.1, 16);
-const ballmaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-const ball = new THREE.Mesh(ballgeometry, ballmaterial);
-ball.position.set(0, 0, 0); // top-left-up all positive
-scene.add(ball);
-
-const newPageGeo = new PageGeo(randomId(), 2, 4);
-newPageGeo.geometry.translate(0, 0, 1);
-// newPageGeo.plane.position.set(0, 0, 5);
-scene.add(newPageGeo.plane);
+  // const iterator = book1.pagesGeo.keys();
+  // book1.addActivePageGeo(iterator.next().value);
+  // book1.addActivePageGeo(iterator.next().value);
+  // console.log(book1.info(), oldPages);
+}
+initBook();
+// const newPageGeo = new PageGeo(randomId(), 2, 4);
+// newPageGeo.geometry.translate(0, 0, 1);
+// // newPageGeo.plane.position.set(0, 0, 5);
+// scene.add(newPageGeo.plane);
 
 // lights, camera, controls setup ======================
 scene.add(ambientLight);
@@ -153,6 +140,8 @@ const mouse = new THREE.Vector2();
 
 const grab = new THREE.Vector3(); // grabStart
 const grabRadius = 0.3;
+const prevMouseWorld = new THREE.Vector3();
+let grabWorldZ = 0;
 
 let grabbedIndexes = [];
 let grabbedVertices = new Map();
@@ -185,6 +174,9 @@ canvas.addEventListener('mousedown', (event) => {
   const localPoint = selectedObject.worldToLocal(intersects[0].point.clone());
   grab.copy(localPoint);
 
+  grabWorldZ = intersects[0].point.z;
+  prevMouseWorld.copy(intersects[0].point);
+
   // select vertices within radius// sqrt((x2 - x1)^2 + (y2 - y1)^2)
   for (let i = 0; i < pos.count; i++) {
     const dx = pos.getX(i) - grab.x;
@@ -208,9 +200,28 @@ canvas.addEventListener('mousedown', (event) => {
 
 canvas.addEventListener('mousemove', (event) => {
   if (!isDragging || !selectedObject) return;
-  console.log(selectedObject);
 
-  renderFun();
+  updateMousePosition(event);
+
+  // Unproject current mouse to the same world-Z plane as the grab point
+  const vec = new THREE.Vector3(mouse.x, mouse.y, 0.5);
+  vec.unproject(camera);
+  const dir = vec.sub(camera.position).normalize();
+  const dist = (grabWorldZ - camera.position.z) / dir.z;
+  const currentMouseWorld = camera.position
+    .clone()
+    .add(dir.multiplyScalar(dist));
+
+  // World-space delta since last frame
+  const dx = currentMouseWorld.x - prevMouseWorld.x;
+  const dy = currentMouseWorld.y - prevMouseWorld.y;
+  const dz = currentMouseWorld.z - prevMouseWorld.z;
+
+  prevMouseWorld.copy(currentMouseWorld);
+
+  applyMouseDrag(newPageGeo.geometry, grabbedIndexes, dx, dy, dz, 8);
+  wakeUp();
+  // renderFun();
 });
 
 canvas.addEventListener('mouseup', () => {
@@ -305,11 +316,11 @@ window.addEventListener('keydown', (e) => {
         1, // force unused here
         newPageGeo.geometry.userData.mass,
         new Set(), // dynamic pinned set, can be replaced/updated
-        2, // iterations (spring accumulation)
-        100, // stiffness
-        5, // bendStiffness
-        0.8, // damping
-        1 / 60,
+        1, // iterations (spring accumulation)
+        200, // stiffness
+        3, // bendStiffness
+        0.9, // damping
+        1 / 90,
         5
       ),
     });
