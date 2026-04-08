@@ -46,7 +46,7 @@ export function applyMouseDrag(
   deltaX,
   deltaY,
   deltaZ,
-  strength = 1
+  strength = 2
 ) {
   if (!geometry || !grabbedIndexes.length) return;
 
