@@ -25,7 +25,7 @@ const GRAVITY = 0.001;
 // THREE.Object3D.DefaultUp = new THREE.Vector3(0, 0, 1);
 const scene = new THREE.Scene();
 const light = new THREE.DirectionalLight('white', 1);
-const ambientLight = new THREE.AmbientLight(0x404040, 1);
+const ambientLight = new THREE.AmbientLight(0xffffff, 1);
 const camera = new THREE.PerspectiveCamera(
   5, // fov
   window.innerWidth / window.innerHeight, // aspect
@@ -40,9 +40,11 @@ scene.background = new THREE.Color('black');
 light.position.set(0, 30, 100);
 light.target.position.set(0, 2, 0);
 light.castShadow = true;
-// // if bigger size
-// light.shadow.mapSize.width = 2048;
-// light.shadow.mapSize.height = 2048;
+light.shadow.bias = -0.0005;
+light.shadow.normalBias = 0.05;
+// if bigger size
+light.shadow.mapSize.width = 2048;
+light.shadow.mapSize.height = 2048;
 
 // light.shadow.camera.near = 1;
 // light.shadow.camera.far = 500;
@@ -77,8 +79,6 @@ function initBook() {
       const newPageGeo = new PageGeo(randomId(), 2, 4);
       newPageGeo.addMetas(oldPages);
 
-      console.log(newPageGeo.vertices().count, 'ver');
-
       book1.addPageGeo(newPageGeo.id, newPageGeo);
       oldPages.length = 0;
     }
@@ -102,8 +102,8 @@ function initBook() {
   const geometry = new THREE.CylinderGeometry(0.05, 0.05, 4, 16);
   const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
   const ball = new THREE.Mesh(geometry, material);
-  // ball.position.set(0, 0, 0); // top-left-up all positive
-  ball.position.set(0, 2, 0.05); // top-left-up all positive
+  ball.position.set(0, 0, 0); // top-left-up all positive
+  // ball.position.set(0, 2, 0.05); // top-left-up all positive
   scene.add(ball);
 
   // const iterator = book1.pagesGeo.keys();
@@ -111,7 +111,7 @@ function initBook() {
   // book1.addActivePageGeo(iterator.next().value);
   // console.log(book1.info(), oldPages);
 }
-initBook();
+
 // const newPageGeo = new PageGeo(randomId(), 2, 4);
 // newPageGeo.geometry.translate(0, 0, 1);
 // // newPageGeo.plane.position.set(0, 0, 5);
@@ -131,7 +131,7 @@ function renderFun() {
   renderer.render(scene, camera);
 }
 
-// initBook();
+initBook();
 controls.update();
 
 // ray casting =================================
@@ -147,7 +147,7 @@ let grabbedIndexes = [];
 let grabbedVertices = new Map();
 
 let isDragging = false;
-let selectedObject = null;
+let selectedPageGeo = null;
 
 // Convert mouse position to normalized device coordinates
 function updateMousePosition(event) {
@@ -156,54 +156,83 @@ function updateMousePosition(event) {
 }
 
 canvas.addEventListener('mousedown', (event) => {
+  wakeUp();
   updateMousePosition(event);
   raycaster.setFromCamera(mouse, camera);
 
-  const intersects = raycaster.intersectObject(newPageGeo.plane);
+  // collect all planes
+  const planes = [...book1.pagesGeo.values()].map((pg) => pg.plane);
+  const intersects = raycaster.intersectObjects(planes);
   if (!intersects.length) return;
 
   isDragging = true;
-  selectedObject = intersects[0].object;
+  selectedPageGeo = intersects[0].object; // the THREE.Mesh
 
-  const pos = selectedObject.geometry.attributes.position;
-  console.log(pos, pos.getX(0), selectedObject.geometry.index, 'pos');
+  // find which PageGeo owns this mesh
+  selectedPageGeo = [...book1.pagesGeo.values()].find(
+    (pg) => pg.plane == selectedPageGeo
+  );
+  if (!selectedPageGeo) return;
+
+  // rest stays the same, just swap newPageGeo → selectedPageGeo
+  const pos = selectedPageGeo.geometry.attributes.position;
+  const localPoint = selectedPageGeo.plane.worldToLocal(
+    intersects[0].point.clone()
+  );
+  grab.copy(localPoint);
+  grabWorldZ = intersects[0].point.z;
+  prevMouseWorld.copy(intersects[0].point);
 
   grabbedIndexes.length = 0;
   grabbedVertices.clear();
 
-  const localPoint = selectedObject.worldToLocal(intersects[0].point.clone());
-  grab.copy(localPoint);
-
-  grabWorldZ = intersects[0].point.z;
-  prevMouseWorld.copy(intersects[0].point);
-
-  // select vertices within radius// sqrt((x2 - x1)^2 + (y2 - y1)^2)
   for (let i = 0; i < pos.count; i++) {
     const dx = pos.getX(i) - grab.x;
     const dy = pos.getY(i) - grab.y;
     const dz = pos.getZ(i) - grab.z;
-
     if (dx * dx + dy * dy + dz * dz <= grabRadius * grabRadius) {
       grabbedIndexes.push(i);
       grabbedVertices.set(i, {
         x: pos.getX(i),
         y: pos.getY(i),
         z: pos.getZ(i),
-        // weight:
-        //   dx * dx + dy * dy + dz * dz <= grabRadius * grabRadius ? weight : 0,
       });
     }
   }
 
   controls.enabled = false;
-});
 
+  if (
+    springEnabled &&
+    selectedPageGeo.geometry &&
+    !selectedPageGeo.geometry.userData.springEdgesBuilt
+  ) {
+    APPLY_FORCES.push({
+      applyOnce: false,
+      geometry: selectedPageGeo.geometry,
+      apply: applyPageSpringForces(
+        selectedPageGeo.geometry,
+        selectedPageGeo.geometry.attributes.position,
+        selectedPageGeo.geometry.index.array,
+        selectedPageGeo.geometry.attributes.position.array,
+        1,
+        selectedPageGeo.geometry.userData.mass,
+        new Set(),
+        3, // iterations (spring accumulation)
+        300, // stiffness
+        30, // bendStiffness
+        0.7, // damping
+        1 / 120,
+        100
+      ),
+    });
+  }
+});
 canvas.addEventListener('mousemove', (event) => {
-  if (!isDragging || !selectedObject) return;
+  if (!isDragging || !selectedPageGeo) return;
 
   updateMousePosition(event);
 
-  // Unproject current mouse to the same world-Z plane as the grab point
   const vec = new THREE.Vector3(mouse.x, mouse.y, 0.5);
   vec.unproject(camera);
   const dir = vec.sub(camera.position).normalize();
@@ -212,64 +241,55 @@ canvas.addEventListener('mousemove', (event) => {
     .clone()
     .add(dir.multiplyScalar(dist));
 
-  // World-space delta since last frame
   const dx = currentMouseWorld.x - prevMouseWorld.x;
   const dy = currentMouseWorld.y - prevMouseWorld.y;
   const dz = currentMouseWorld.z - prevMouseWorld.z;
 
   prevMouseWorld.copy(currentMouseWorld);
 
-  applyMouseDrag(newPageGeo.geometry, grabbedIndexes, dx, dy, dz, 8);
+  applyMouseDrag(selectedPageGeo.geometry, grabbedIndexes, dx, dy, dz, 30);
   wakeUp();
-  // renderFun();
 });
-
 canvas.addEventListener('mouseup', () => {
-  // renderAnimation();
-  isDragging = false;
-  selectedObject = null;
-  // grabbedIndexes.length = 0;
   // grabbedVertices.clear();
+  // grabbedIndexes.length = 0;
+  // selectedPageGeo = null;
+  isDragging = false;
   controls.enabled = true;
+  // renderAnimation();
 });
 
 // animation frame ================================
 
 let renderAnimationId,
-  toUpdate = false;
+  toUpdate = false,
+  springEnabled = false;
 let isLooping = false,
   lastActivityTime = Date.now();
-const IDLE_TIMEOUT = 6000; // 3 seconds
+const IDLE_TIMEOUT = 6000;
 
+const byGeo = new Map();
 function renderAnimation() {
-  let physicsStillMoving = false;
-
   if (APPLY_FORCES.length) {
-    toUpdate = false;
-    let toApply = new Float32Array(
-      newPageGeo.geometry.attributes.position.count * 3
-    );
+    // group forces by geometry
+    byGeo.clear();
 
     for (let i = APPLY_FORCES.length - 1; i >= 0; i--) {
-      const z = APPLY_FORCES[i];
+      const entry = APPLY_FORCES[i];
+      const f = entry.apply(true);
+      if (entry.applyOnce) APPLY_FORCES.splice(i, 1);
+      if (!f?.updated) continue;
 
-      const f = z.apply(true);
-      if (z.applyOnce) {
-        APPLY_FORCES.splice(i, 1);
-      }
+      const geo = entry.geometry; // 👈 stored on the entry
+      if (!byGeo.has(geo))
+        byGeo.set(geo, new Float32Array(geo.attributes.position.count * 3));
 
-      if (!f || !f.updated) continue;
-
-      toUpdate = true;
-      physicsStillMoving = true;
-
-      for (let i = 0; i < toApply.length; i++) {
-        toApply[i] += f.result[i];
-      }
+      const toApply = byGeo.get(geo);
+      for (let j = 0; j < toApply.length; j++) toApply[j] += f.result[j];
     }
 
-    if (toApply && toUpdate) {
-      applyForce(newPageGeo.geometry, toApply);
+    for (const [geo, toApply] of byGeo) {
+      applyForce(geo, toApply);
     }
   }
 
@@ -296,25 +316,30 @@ function wakeUp() {
 wakeUp();
 
 window.addEventListener('keydown', (e) => {
-  // console.log(e.key);
+  console.log(selectedPageGeo, 'selectedPageGeo');
+
   if (e.key == 'Escape') {
     console.log(1);
     cancelAnimationFrame(renderAnimationId);
   }
+
   if (e.key == 'b') {
+    springEnabled = true;
+    return;
+
     wakeUp();
 
-    // newPageGeo.geometry.translate(0, 0, 5);
     APPLY_FORCES.push({
       applyOnce: false,
-
+      geometry:
+        selectedPageGeo.geometry ?? [...book1.pagesGeo.values()][0].geometry,
       apply: applyPageSpringForces(
-        newPageGeo.geometry,
-        newPageGeo.geometry.attributes.position,
-        newPageGeo.geometry.index.array,
-        newPageGeo.geometry.attributes.position.array,
+        selectedPageGeo.geometry,
+        selectedPageGeo.geometry.attributes.position,
+        selectedPageGeo.geometry.index.array,
+        selectedPageGeo.geometry.attributes.position.array,
         1, // force unused here
-        newPageGeo.geometry.userData.mass,
+        selectedPageGeo.geometry.userData.mass,
         new Set(), // dynamic pinned set, can be replaced/updated
         1, // iterations (spring accumulation)
         200, // stiffness
@@ -328,42 +353,46 @@ window.addEventListener('keydown', (e) => {
     // APPLY_FORCES.push({
     //   applyOnce: false,
     //   apply: applyDistanceConstraints(
-    //     newPageGeo.geometry,
-    //     newPageGeo.geometry.attributes.position,
-    //     newPageGeo.geometry.index.array,
-    //     newPageGeo.geometry.attributes.position.array,
+    //     selectedPageGeo.geometry,
+    //     selectedPageGeo.geometry.attributes.position,
+    //     selectedPageGeo.geometry.index.array,
+    //     selectedPageGeo.geometry.attributes.position.array,
     //     1,
-    //     newPageGeo.geometry.userData.mass
+    //     selectedPageGeo.geometry.userData.mass
     //   ),
     // });
   }
+
+  // Guard clause: stop here if no page is selected
+  if (!selectedPageGeo) return;
+
   if (e.key == 'g') {
     wakeUp();
 
     // apply gravity on each render
     APPLY_FORCES.push({
       applyOnce: false,
+      geometry: selectedPageGeo.geometry,
       apply: applyGravity(
-        newPageGeo.geometry.attributes.position,
-        newPageGeo.geometry.index.array,
-        newPageGeo.geometry.attributes.position.array,
+        selectedPageGeo.geometry.attributes.position,
+        selectedPageGeo.geometry.index.array,
+        selectedPageGeo.geometry.attributes.position.array,
         GRAVITY,
-        newPageGeo.geometry.userData.mass
+        selectedPageGeo.geometry.userData.mass
       ),
     });
-    console.log(APPLY_FORCES);
   }
   if (e.key == 'ArrowLeft') {
     wakeUp();
 
-    console.log(grabbedVertices, grabbedIndexes);
     APPLY_FORCES.push({
       applyOnce: true,
+      geometry: selectedPageGeo.geometry,
       apply: applyLeftPush(
-        newPageGeo.geometry,
+        selectedPageGeo.geometry,
         grabbedIndexes,
         0.3,
-        newPageGeo.geometry.userData.mass
+        selectedPageGeo.geometry.userData.mass
       ),
     });
   } else if (e.key == 'ArrowRight') {
@@ -371,12 +400,13 @@ window.addEventListener('keydown', (e) => {
 
     APPLY_FORCES.push({
       applyOnce: true,
+      geometry: selectedPageGeo.geometry,
       apply: applyRightPush(
-        newPageGeo.geometry.attributes.position,
+        selectedPageGeo.geometry.attributes.position,
         grabbedIndexes,
         grabbedVertices,
         0.1,
-        newPageGeo.geometry.userData.mass
+        selectedPageGeo.geometry.userData.mass
       ),
     });
   }

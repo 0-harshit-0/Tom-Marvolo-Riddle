@@ -39,7 +39,6 @@ export function applyGravity(pos, indices, vertices, force = 0, mass = 0) {
   };
 }
 
-// phy.js - applyMouseDrag
 export function applyMouseDrag(
   geometry,
   grabbedIndexes,
@@ -49,22 +48,48 @@ export function applyMouseDrag(
   strength = 1
 ) {
   if (!geometry || !grabbedIndexes.length) return;
-
   const velocities = geometry.userData.springVelocities;
   if (!velocities) return;
 
   const hingeX = geometry.userData.hingeX;
+  const maxX = geometry.userData.maxX;
   const pos = geometry.attributes.position;
 
   for (const i of grabbedIndexes) {
-    // vertices right of hinge lift up (+Z) when pushed left, drop when pushed right
-    const zDirection = pos.getX(i) - hingeX > 0 ? -1 : 1;
+    const originalX = geometry.userData.original[i * 3];
+    const distFromHinge = originalX - hingeX;
 
-    velocities[i * 3] += deltaX * strength;
+    // Ensure normalized distance is strictly positive
+    const normalized = Math.abs(distFromHinge / (maxX - hingeX));
+    const zFactor = normalized;
+
+    const currentX = pos.getX(i);
+
+    // 1. Arc Logic: Lift up when moving towards hinge, drop when moving away
+    // If on left side, moving right (+deltaX) should lift (+Z).
+    // If on right side, moving right (+deltaX) should drop (-Z).
+    const sideMultiplier = currentX < hingeX ? 1 : -1;
+    const zDelta = deltaX * sideMultiplier;
+
+    // 2. Outward Push: Give an extra X boost when pushing away from the hinge
+    let xAssist = 1;
+    const movingAwayFromHinge =
+      (deltaX > 0 && currentX > hingeX) || (deltaX < 0 && currentX < hingeX);
+
+    if (movingAwayFromHinge) {
+      xAssist = 1.4; // 40% extra push to help it lay completely flat
+    }
+
+    // 3. Z-Dampening: Soften the downward force so it clears the hinge smoothly
+    const zDampener = zDelta < 0 ? 0.5 : 1.2;
+
+    // Apply the newly calculated velocities
+    velocities[i * 3] += deltaX * strength * xAssist;
     velocities[i * 3 + 1] += deltaY * strength;
-    velocities[i * 3 + 2] += deltaX * zDirection * strength; // 👈 derived from deltaX, not deltaZ
+    velocities[i * 3 + 2] += zDelta * zFactor * zDampener * strength;
   }
 }
+
 export function applyLeftPush(geometry, indices, force = 0.5) {
   if (!geometry || !indices.length) return null;
 
@@ -445,7 +470,7 @@ export function applyPageSpringForces(
   bendStiffness = 30, // Bending stiffness (should be lower)
   damping = 0.95, // Velocity retention (0.9 - 0.98 is good)
   dt = 1 / 60,
-  maxVel = 1.0 // Prevents "explosions"
+  maxVel = 16.0 // Prevents "explosions"
 ) {
   if (!geometry || !pos || !indices) return null;
 
@@ -484,6 +509,13 @@ export function applyPageSpringForces(
         const i = y * rowSize + x;
         if (x + 2 <= wSeg) addEdge(bending, i, y * rowSize + (x + 2));
         if (y + 2 <= hSeg) addEdge(bending, i, (y + 2) * rowSize + x);
+
+        if (x + 2 <= wSeg && y + 2 <= hSeg) {
+          addEdge(bending, i, (y + 2) * rowSize + (x + 2)); // Bottom-Right twist
+        }
+        if (x - 2 >= 0 && y + 2 <= hSeg) {
+          addEdge(bending, i, (y + 2) * rowSize + (x - 2)); // Bottom-Left twist
+        }
       }
     }
 
