@@ -45,6 +45,7 @@ module.exports = {
         { from: 'src/index.html', to: 'index.html' },
         { from: 'src/style.css', to: 'style.css' },
 
+        { from: './src/paper.jpg', to: 'paper.jpg' },
         // { from: './robots.txt', to: 'robots.txt' },
         // { from: './sitemap.xml', to: 'sitemap.xml' },
         // { from: './locales', to: 'locales' },

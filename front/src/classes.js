@@ -63,7 +63,7 @@ class Page {
   }
 }
 class PageGeo {
-  constructor(id, width, height, color = 0xfafafa, wire = true) {
+  constructor(id, width, height, color = 0xfafafa, wire = false) {
     /**
      */
     this.id = id;
@@ -74,20 +74,44 @@ class PageGeo {
 
     // each page is double sided, so, from ltr perspective, one id and page number for the left, and other for the right.
     this.geometry = new THREE.PlaneGeometry(width, height, 10, 20);
-    // this.geometry.translate(width / 1.9, height / 2, 0);
+    this.geometry.translate(width / 1.9, 0, 0);
+
+    // user data
     this.geometry.userData.original = new Float32Array(
       this.geometry.attributes.position.array
     );
     this.geometry.userData.mass = this.mass;
+    const pos = this.geometry.attributes.position;
+    const xs = [];
+    for (let i = 0; i < pos.count; i++) {
+      xs.push(pos.getX(i));
+    }
+    this.geometry.userData.hingeX = Math.min(...xs);
+    this.geometry.userData.maxX = Math.max(...xs);
+
+    // material
+    // replace the material setup
+    const texture = new THREE.TextureLoader().load('paper.jpg');
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
 
     this.material = new THREE.MeshLambertMaterial({
-      color: color,
+      map: texture, // 👈 apply texture
       side: THREE.DoubleSide,
       wireframe: wire,
       flatShading: false,
-      // map: new THREE.TextureLoader().load('data:image/png;base64,iVBORw0KG...'),
-      emissive: 0x222222, // Slight glow
+      emissive: 0x111111, // reduced so texture colors show clearly
     });
+    this.material.shadowSide = THREE.BackSide;
+
+    // this.material = new THREE.MeshLambertMaterial({
+    //   color: color,
+    //   side: THREE.DoubleSide,
+    //   wireframe: wire,
+    //   flatShading: false,
+    //   // map: new THREE.TextureLoader().load('data:image/png;base64,iVBORw0KG...'),
+    //   emissive: 0x222222, // Slight glow
+    // });
 
     // this.material.frustumCulled = false;
     this.plane = new THREE.Mesh(this.geometry, this.material);
