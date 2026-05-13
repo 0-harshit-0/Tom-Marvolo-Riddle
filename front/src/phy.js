@@ -9,26 +9,20 @@ export function applyGravity(pos, indices, vertices, force = 0, mass = 0) {
   return (refresh) => {
     let inMotion = false;
 
-    // acc will automatically become less if the force of gravity is less than other,
     vel += acc;
     vel = Math.min(maxVel, vel);
 
-    // create a new Float32Array for updated positions
     const result = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
       const currentZ = pos.getZ(i);
-      /** rules of gravity
-       * all the Z should not be less than 0.
-       * 0 is the imaginary plane.
-       */
       if (currentZ <= 0) continue;
 
       inMotion = true;
-      const deltaZ = vel; //Math.max(0, currentZ - vel);
+      const deltaZ = vel;
 
       result[i * 3] = 0;
       result[i * 3 + 1] = 0;
-      result[i * 3 + 2] = -deltaZ; //nextZ - original[i * 3 + 2];
+      result[i * 3 + 2] = -deltaZ;
     }
 
     if (!inMotion) {
@@ -59,31 +53,24 @@ export function applyMouseDrag(
     const originalX = geometry.userData.original[i * 3];
     const distFromHinge = originalX - hingeX;
 
-    // Ensure normalized distance is strictly positive
     const normalized = Math.abs(distFromHinge / (maxX - hingeX));
     const zFactor = normalized;
 
     const currentX = pos.getX(i);
 
-    // 1. Arc Logic: Lift up when moving towards hinge, drop when moving away
-    // If on left side, moving right (+deltaX) should lift (+Z).
-    // If on right side, moving right (+deltaX) should drop (-Z).
     const sideMultiplier = currentX < hingeX ? 1 : -1;
     const zDelta = deltaX * sideMultiplier;
 
-    // 2. Outward Push: Give an extra X boost when pushing away from the hinge
     let xAssist = 1;
     const movingAwayFromHinge =
       (deltaX > 0 && currentX > hingeX) || (deltaX < 0 && currentX < hingeX);
 
     if (movingAwayFromHinge) {
-      xAssist = 1.4; // 40% extra push to help it lay completely flat
+      xAssist = 1.4;
     }
 
-    // 3. Z-Dampening: Soften the downward force so it clears the hinge smoothly
     const zDampener = zDelta < 0 ? 0.5 : 1.2;
 
-    // Apply the newly calculated velocities
     velocities[i * 3] += deltaX * strength * xAssist;
     velocities[i * 3 + 1] += deltaY * strength;
     velocities[i * 3 + 2] += zDelta * zFactor * zDampener * strength;
@@ -94,26 +81,22 @@ export function applyLeftPush(geometry, indices, force = 0.5) {
   if (!geometry || !indices.length) return null;
 
   const velocities = geometry.userData.springVelocities;
-  const hingeX = geometry.userData.hingeX; // Grab the hinge X
+  const hingeX = geometry.userData.hingeX;
   const pos = geometry.attributes.position;
 
   return () => {
     for (const i of indices) {
       const currentX = pos.getX(i);
-
-      // Calculate Z direction:
-      // If vertex is to the right of hinge, push UP (+).
-      // If vertex is to the left of hinge, push DOWN (-).
       const zDirection = currentX - hingeX > 0 ? 1 : -1;
 
-      // Inject velocity as an Impulse
-      velocities[i * 3] -= force; // Move Left
-      velocities[i * 3 + 2] += force * zDirection; // Directional Lift
+      velocities[i * 3] -= force;
+      velocities[i * 3 + 2] += force * zDirection;
     }
 
     return { updated: false, result: null };
   };
 }
+
 export function applyRightPush(pos, indices, vertices, force = 0, mass = 0) {
   if (!pos || !indices || !vertices || !force || !mass) return null;
 
@@ -123,19 +106,11 @@ export function applyRightPush(pos, indices, vertices, force = 0, mass = 0) {
   let vel = 0;
 
   return (refresh) => {
-    // acc will automatically become less if the force of gravity is less than other,
     vel += acc;
     vel = Math.min(maxVel, vel);
 
-    // create a new Float32Array for updated positions
     const result = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
-      /** rules of a page
-       * Z cannot go below 0. (Thats the imaginary plane)
-       * Active page XYZ cannot be below any other page's XYZ, if it's on top.
-       *
-       */
-
       if (!indices.includes(i)) continue;
 
       const deltaX = vel;
@@ -162,7 +137,6 @@ export function applyClothDistanceConstraints(
 ) {
   if (!pos || !indices || !geometry) return null;
 
-  // Build constraints once
   if (!geometry.userData.constraints) {
     const constraints = [];
     const edges = new Set();
@@ -246,7 +220,6 @@ export function applyDistanceConstraints(
   vertices,
   force = 0,
   mass = 0,
-
   pinned = new Set(),
   iterations = 30,
   stiffness = 0.95,
@@ -256,9 +229,6 @@ export function applyDistanceConstraints(
 
   const index = indices;
 
-  // ===============================
-  // Build constraints once (from geometry positions at time of build)
-  // ===============================
   if (!geometry.userData.constraintsBuilt) {
     const structural = [];
     const bending = [];
@@ -277,98 +247,70 @@ export function applyDistanceConstraints(
       list.push({ i1, i2, rest });
     };
 
-    // Structural constraints from triangle edges
     for (let i = 0; i < index.length; i += 3) {
-      const a = index[i];
-      const b = index[i + 1];
-      const c = index[i + 2];
-
-      addEdge(structural, a, b);
-      addEdge(structural, b, c);
-      addEdge(structural, c, a);
+      addEdge(structural, index[i], index[i + 1]);
+      addEdge(structural, index[i + 1], index[i + 2]);
+      addEdge(structural, index[i + 2], index[i]);
     }
 
-    // Shear constraints (cross quad)
     const wSeg = geometry.parameters.widthSegments;
     const hSeg = geometry.parameters.heightSegments;
     const rowSize = wSeg + 1;
 
-    for (let y = 0; y < hSeg; y++) {
-      for (let x = 0; x < wSeg; x++) {
-        const i1 = y * rowSize + (x + 1);
-        const i2 = (y + 1) * rowSize + x;
-        addEdge(structural, i1, i2);
-      }
-    }
-
-    // Bending constraints (2-step neighbors)
     for (let y = 0; y <= hSeg; y++) {
       for (let x = 0; x <= wSeg; x++) {
         const i = y * rowSize + x;
-
-        if (x + 2 <= wSeg) {
-          const j = y * rowSize + (x + 2);
-          addEdge(bending, i, j);
-        }
-
-        if (y + 2 <= hSeg) {
-          const j = (y + 2) * rowSize + x;
-          addEdge(bending, i, j);
-        }
+        if (x + 2 <= wSeg) addEdge(bending, i, y * rowSize + (x + 2));
+        if (y + 2 <= hSeg) addEdge(bending, i, (y + 2) * rowSize + x);
+        if (x + 2 <= wSeg && y + 2 <= hSeg)
+          addEdge(bending, i, (y + 2) * rowSize + (x + 2));
+        if (x - 2 >= 0 && y + 2 <= hSeg)
+          addEdge(bending, i, (y + 2) * rowSize + (x - 2));
       }
     }
 
-    geometry.userData.structural = structural;
-    geometry.userData.bending = bending;
-
-    // ===============================
-    // Build hinge pinned set (fully fixed in xyz)
-    // ===============================
     const hingeX = geometry.userData.hingeX;
     const hingePinned = new Set();
-
     for (let i = 0; i < pos.count; i++) {
-      const originalX = geometry.userData.original[i * 3];
-      if (Math.abs(originalX - hingeX) < 0.001) {
+      if (Math.abs(geometry.userData.original[i * 3] - hingeX) < 0.001) {
         hingePinned.add(i);
       }
     }
 
-    geometry.userData.hingePinned = hingePinned;
+    geometry.userData.dcStructural = structural;
+    geometry.userData.dcBending = bending;
+    geometry.userData.dcHingePinned = hingePinned;
     geometry.userData.constraintsBuilt = true;
   }
 
-  // ===============================
-  // Solver function returns (refresh) => { updated, result }
-  // result is a Float32Array of deltas (x,y,z) for each vertex
-  // ===============================
-  return (refresh) => {
-    const structural = geometry.userData.structural;
-    const bending = geometry.userData.bending;
-    const hingePinned = geometry.userData.hingePinned;
+  const { dcStructural, dcBending, dcHingePinned } = geometry.userData;
 
-    const count = pos.count;
-    // copy current positions into a local buffer cur (x,y,z interleaved)
-    const cur = new Float32Array(count * 3);
+  const count = pos.count;
+  const cur = new Float32Array(count * 3);
+
+  const getX = (buf, i) => buf[i * 3];
+  const getY = (buf, i) => buf[i * 3 + 1];
+  const getZ = (buf, i) => buf[i * 3 + 2];
+  const setXYZ = (buf, i, x, y, z) => {
+    buf[i * 3] = x;
+    buf[i * 3 + 1] = y;
+    buf[i * 3 + 2] = z;
+  };
+
+  return () => {
     for (let i = 0; i < count; i++) {
       cur[i * 3] = pos.getX(i);
       cur[i * 3 + 1] = pos.getY(i);
       cur[i * 3 + 2] = pos.getZ(i);
     }
 
-    const getX = (arr, i) => arr[i * 3];
-    const getY = (arr, i) => arr[i * 3 + 1];
-    const getZ = (arr, i) => arr[i * 3 + 2];
-    const setXYZ = (arr, i, x, y, z) => {
-      arr[i * 3] = x;
-      arr[i * 3 + 1] = y;
-      arr[i * 3 + 2] = z;
-    };
+    const allPinned = new Set([...pinned, ...dcHingePinned]);
 
     const solve = (constraints, stiff) => {
       for (const { i1, i2, rest } of constraints) {
-        const isPinned1 = pinned.has(i1) || hingePinned.has(i1);
-        const isPinned2 = pinned.has(i2) || hingePinned.has(i2);
+        const isPinned1 = allPinned.has(i1);
+        const isPinned2 = allPinned.has(i2);
+        if (isPinned1 && isPinned2) continue;
 
         const x1 = getX(cur, i1);
         const y1 = getY(cur, i1);
@@ -388,7 +330,6 @@ export function applyDistanceConstraints(
         const diff = (dist - rest) / dist;
 
         if (isPinned1 && !isPinned2) {
-          // move i2 fully
           setXYZ(
             cur,
             i2,
@@ -397,7 +338,6 @@ export function applyDistanceConstraints(
             z2 - dz * diff * stiff
           );
         } else if (!isPinned1 && isPinned2) {
-          // move i1 fully
           setXYZ(
             cur,
             i1,
@@ -405,8 +345,7 @@ export function applyDistanceConstraints(
             y1 + dy * diff * stiff,
             z1 + dz * diff * stiff
           );
-        } else if (!isPinned1 && !isPinned2) {
-          // split correction
+        } else {
           const corrX = dx * 0.5 * diff * stiff;
           const corrY = dy * 0.5 * diff * stiff;
           const corrZ = dz * 0.5 * diff * stiff;
@@ -414,18 +353,14 @@ export function applyDistanceConstraints(
           setXYZ(cur, i1, x1 + corrX, y1 + corrY, z1 + corrZ);
           setXYZ(cur, i2, x2 - corrX, y2 - corrY, z2 - corrZ);
         }
-        // if both pinned do nothing
       }
     };
 
-    // iterative solver on local buffer
     for (let k = 0; k < iterations; k++) {
-      solve(structural, stiffness);
-      solve(bending, bendStiffness);
+      solve(dcStructural, stiffness);
+      solve(dcBending, bendStiffness);
 
-      // ensure hinge pinned vertices remain exactly at original positions for extra safety
-      // they are already treated as pinned above but restore to original to avoid drift
-      for (const i of hingePinned) {
+      for (const i of dcHingePinned) {
         const ox = geometry.userData.original[i * 3];
         const oy = geometry.userData.original[i * 3 + 1];
         const oz = geometry.userData.original[i * 3 + 2];
@@ -433,7 +368,6 @@ export function applyDistanceConstraints(
       }
     }
 
-    // compute delta = cur - originalPosAtStart
     const result = new Float32Array(count * 3);
     let maxDelta = 0;
     for (let i = 0; i < count; i++) {
@@ -452,7 +386,7 @@ export function applyDistanceConstraints(
       maxDelta = Math.max(maxDelta, Math.abs(rx), Math.abs(ry), Math.abs(rz));
     }
 
-    const updated = maxDelta > 1e-7; // tiny threshold
+    const updated = maxDelta > 1e-7;
     return { updated, result };
   };
 }
@@ -466,15 +400,14 @@ export function applyPageSpringForces(
   mass = 0,
   pinned = new Set(),
   iterations = 1,
-  stiffness = 150, // Structural stiffness
-  bendStiffness = 30, // Bending stiffness (should be lower)
-  damping = 0.95, // Velocity retention (0.9 - 0.98 is good)
+  stiffness = 150,
+  bendStiffness = 30,
+  damping = 0.95,
   dt = 1 / 60,
-  maxVel = 16.0 // Prevents "explosions"
+  maxVel = 16.0
 ) {
   if (!geometry || !pos || !indices) return null;
 
-  // 1. Setup Constraints and Velocities (Run once)
   if (!geometry.userData.springEdgesBuilt) {
     const structural = [];
     const bending = [];
@@ -492,7 +425,6 @@ export function applyPageSpringForces(
       list.push({ i1, i2, rest });
     };
 
-    // Build Structural Edges (Triangle edges + Shear/Cross-quad)
     for (let i = 0; i < indices.length; i += 3) {
       addEdge(structural, indices[i], indices[i + 1]);
       addEdge(structural, indices[i + 1], indices[i + 2]);
@@ -503,7 +435,6 @@ export function applyPageSpringForces(
     const hSeg = geometry.parameters.heightSegments;
     const rowSize = wSeg + 1;
 
-    // Build Bending Edges (Skip neighbors)
     for (let y = 0; y <= hSeg; y++) {
       for (let x = 0; x <= wSeg; x++) {
         const i = y * rowSize + x;
@@ -511,10 +442,10 @@ export function applyPageSpringForces(
         if (y + 2 <= hSeg) addEdge(bending, i, (y + 2) * rowSize + x);
 
         if (x + 2 <= wSeg && y + 2 <= hSeg) {
-          addEdge(bending, i, (y + 2) * rowSize + (x + 2)); // Bottom-Right twist
+          addEdge(bending, i, (y + 2) * rowSize + (x + 2));
         }
         if (x - 2 >= 0 && y + 2 <= hSeg) {
-          addEdge(bending, i, (y + 2) * rowSize + (x - 2)); // Bottom-Left twist
+          addEdge(bending, i, (y + 2) * rowSize + (x - 2));
         }
       }
     }
@@ -523,7 +454,6 @@ export function applyPageSpringForces(
     geometry.userData.springBending = bending;
     geometry.userData.springVelocities = new Float32Array(pos.count * 3);
 
-    // Locate Hinge (Fixed side)
     const hingeX = geometry.userData.hingeX;
     const hingePinned = new Set();
     for (let i = 0; i < pos.count; i++) {
@@ -542,7 +472,6 @@ export function applyPageSpringForces(
     const vMass = geometry.userData.mass || mass || 1;
     const fAccum = new Float32Array(count * 3);
 
-    // 2. Accumulate Spring Forces (Hooke's Law: F = -k * displacement)
     const solveSprings = (edges, k) => {
       for (let e = 0; e < edges.length; e++) {
         const { i1, i2, rest } = edges[e];
@@ -552,12 +481,11 @@ export function applyPageSpringForces(
         const dz = pos.getZ(i2) - pos.getZ(i1);
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.0001;
 
-        // --- ADD SNIPPET HERE ---
         const strain = dist / rest;
-        let fMag = (dist - rest) * k; // Use 'k' from the function parameter
+        let fMag = (dist - rest) * k;
 
         if (strain > 1.05) {
-          fMag *= 10; // Rapidly increase resistance if stretching more than 5%
+          fMag *= 10;
         }
 
         const fx = (dx / dist) * fMag;
@@ -582,24 +510,20 @@ export function applyPageSpringForces(
       solveSprings(springBending, bendStiffness);
     }
 
-    // 3. Integration & Damping
     const result = new Float32Array(count * 3);
     let isMoving = false;
 
     for (let i = 0; i < count; i++) {
       if (pinned.has(i) || hingePinned.has(i)) continue;
 
-      // a = F / m
       const ax = fAccum[i * 3] / vMass;
       const ay = fAccum[i * 3 + 1] / vMass;
       const az = fAccum[i * 3 + 2] / vMass;
 
-      // v = (v + a * dt) * damping (Air resistance)
       let vx = (springVelocities[i * 3] + ax * dt) * damping;
       let vy = (springVelocities[i * 3 + 1] + ay * dt) * damping;
       let vz = (springVelocities[i * 3 + 2] + az * dt) * damping;
 
-      // Clamp velocity to prevent physics "explosion"
       const speed = Math.sqrt(vx * vx + vy * vy + vz * vz);
       if (speed > maxVel) {
         const ratio = maxVel / speed;
@@ -612,7 +536,6 @@ export function applyPageSpringForces(
       springVelocities[i * 3 + 1] = vy;
       springVelocities[i * 3 + 2] = vz;
 
-      // Final displacement delta
       result[i * 3] = vx * dt;
       result[i * 3 + 1] = vy * dt;
       result[i * 3 + 2] = vz * dt;
@@ -633,7 +556,6 @@ export function applyForce(geometry, delta, inMotion = false) {
   }
 
   const pos = geometry.attributes.position;
-  const original = geometry.userData.original;
 
   for (let i = 0; i < pos.count; i++) {
     pos.setXYZ(
@@ -654,4 +576,111 @@ export function applyForce(geometry, delta, inMotion = false) {
   }
 
   return { result: 1 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wrapper follow
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Each frame, for every paper vertex, bilinearly interpolates the matching
+ * position on the (deformed) wrapper geometry and applies a spring force
+ * pulling the paper vertex toward that target.
+ *
+ * Uses its own velocity buffer (wrapperFollowVelocities) so it can co-exist
+ * cleanly with applyPageSpringForces on the same paper geometry.
+ *
+ * @param {THREE.BufferGeometry} paperGeo
+ * @param {THREE.BufferGeometry} wrapperGeo
+ * @param {Array}  uvMap       output of buildPageToWrapperMap
+ * @param {number} stiffness   spring constant (try 120–250)
+ * @param {number} damping     velocity retention per frame (0.8–0.92)
+ * @param {number} dt          timestep (1/120 feels responsive)
+ * @param {number} maxVel      explosion guard
+ */
+export function applyWrapperFollow(
+  paperGeo,
+  wrapperGeo,
+  uvMap,
+  stiffness = 150,
+  damping = 0.88,
+  dt = 1 / 120,
+  maxVel = 50
+) {
+  if (!paperGeo || !wrapperGeo || !uvMap) return null;
+
+  // Separate velocity buffer — does not interfere with springVelocities
+  if (!paperGeo.userData.wrapperFollowVelocities) {
+    paperGeo.userData.wrapperFollowVelocities = new Float32Array(
+      paperGeo.attributes.position.count * 3
+    );
+  }
+
+  return () => {
+    const paperPos = paperGeo.attributes.position;
+    const wrapperPos = wrapperGeo.attributes.position;
+    const vels = paperGeo.userData.wrapperFollowVelocities;
+
+    // hingePinned may not exist until applyPageSpringForces runs on the paper.
+    // Fall back to an empty Set so the hinge still acts as expected via the
+    // wrapper's own spring simulation.
+    const hingePinned = paperGeo.userData.hingePinned || new Set();
+
+    const count = paperPos.count;
+    const result = new Float32Array(count * 3);
+    const mass = paperGeo.userData.mass || 1;
+    let isMoving = false;
+
+    for (let i = 0; i < count; i++) {
+      if (hingePinned.has(i)) continue;
+
+      // ── Bilinearly interpolate wrapper position at this paper vertex ──────
+      const { indices, weights } = uvMap[i];
+      let tx = 0,
+        ty = 0,
+        tz = 0;
+      for (let j = 0; j < 4; j++) {
+        const wi = indices[j];
+        const w = weights[j];
+        tx += wrapperPos.getX(wi) * w;
+        ty += wrapperPos.getY(wi) * w;
+        tz += wrapperPos.getZ(wi) * w;
+      }
+
+      // ── Spring force: F = k * (target − current) ─────────────────────────
+      const px = paperPos.getX(i);
+      const py = paperPos.getY(i);
+      const pz = paperPos.getZ(i);
+
+      const ax = ((tx - px) * stiffness) / mass;
+      const ay = ((ty - py) * stiffness) / mass;
+      const az = ((tz - pz) * stiffness) / mass;
+
+      // ── Semi-implicit Euler + damping ─────────────────────────────────────
+      let vx = (vels[i * 3] + ax * dt) * damping;
+      let vy = (vels[i * 3 + 1] + ay * dt) * damping;
+      let vz = (vels[i * 3 + 2] + az * dt) * damping;
+
+      const speed = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      if (speed > maxVel) {
+        const r = maxVel / speed;
+        vx *= r;
+        vy *= r;
+        vz *= r;
+      }
+
+      vels[i * 3] = vx;
+      vels[i * 3 + 1] = vy;
+      vels[i * 3 + 2] = vz;
+
+      result[i * 3] = vx * dt;
+      result[i * 3 + 1] = vy * dt;
+      result[i * 3 + 2] = vz * dt;
+
+      if (Math.abs(vx) > 0.001 || Math.abs(vy) > 0.001 || Math.abs(vz) > 0.001)
+        isMoving = true;
+    }
+
+    return { updated: isMoving, result };
+  };
 }
