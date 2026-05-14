@@ -142,7 +142,7 @@ class PageGeo {
     this.geometry.userData.hingeX = Math.min(...xs);
     this.geometry.userData.maxX = Math.max(...xs);
 
-    const texture = new THREE.TextureLoader().load('paper.png');
+    const texture = new THREE.TextureLoader().load('assets/paper.png');
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
 
@@ -248,18 +248,19 @@ class CoverGeo {
 
     // ── Rigid cover mesh (low poly — it never deforms) ──────────────────────
     this.geometry = new THREE.PlaneGeometry(width, height, 1, 1);
-    // Translate so the left edge sits at x=0 (the pivot/spine axis)
+    // Both covers extend to the right of the spine (+width/2), same as pages.
+    // The back cover starts at angle=Math.PI so it is flipped underneath.
     this.geometry.translate(width / 2, 0, 0);
 
     this.geometry.userData.original = new Float32Array(
       this.geometry.attributes.position.array
     );
-    this.geometry.userData.hingeX = 0; // pivot is at world x=0 after translate
+    this.geometry.userData.hingeX = 0;
     this.geometry.userData.maxX = width;
-    this.geometry.userData.mass = 10; // covers feel heavier than pages
+    this.geometry.userData.mass = 10;
 
     // Texture: load cover.png if available, fall back to solid color
-    const texture = new THREE.TextureLoader().load('cover.png');
+    const texture = new THREE.TextureLoader().load('assets/cover.png');
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
 
@@ -281,11 +282,17 @@ class CoverGeo {
     this.pivot.add(this.plane);
 
     // ── Rigid-body state (managed by applyCoverHinge in phy.js) ─────────────
-    this.angle = isBack ? Math.PI : 0; // back cover starts "open" (flat)
+    // Both covers start CLOSED (angle = 0, flat on top of the page stack).
+    // Front cover opens toward +π (sweeps right→left over the book).
+    // Back cover opens toward -π (sweeps left→right under the book).
+    // Front cover: starts closed (angle=0, flat on top), opens left toward -π.
+    // Back cover:  starts closed (angle=π, flipped underneath), opens left toward 0.
+    // Both open by dragging left (decreasing angle), which feels natural.
+    this.angle = isBack ? Math.PI : 0;
     this.angularVelocity = 0;
     this.angularDamping = 0.88;
-    this.minAngle = 0; // closed (flat on top of book)
-    this.maxAngle = Math.PI; // fully open (flat on other side)
+    this.minAngle = isBack ? 0 : -Math.PI;
+    this.maxAngle = isBack ? Math.PI : 0;
 
     // Apply initial angle
     this.pivot.rotation.y = this.angle;

@@ -768,12 +768,13 @@ export function applyCoverHinge(cover, springBack = 0.2, dt = 1 / 60) {
   if (!cover) return null;
 
   return () => {
-    // Spring-back: gentle torque toward nearest end stop (0 or π)
-    const nearest = cover.angle < Math.PI / 2 ? cover.minAngle : cover.maxAngle;
+    // Spring-back toward whichever end stop is closer.
+    const midAngle = (cover.minAngle + cover.maxAngle) / 2;
+    const nearest = cover.angle < midAngle ? cover.minAngle : cover.maxAngle;
     const springTorque = (nearest - cover.angle) * springBack;
     cover.angularVelocity += springTorque * dt;
 
-    // Integrate
+    // Integrate + dampen
     cover.angularVelocity *= cover.angularDamping;
     cover.angle += cover.angularVelocity * dt;
 
@@ -783,7 +784,7 @@ export function applyCoverHinge(cover, springBack = 0.2, dt = 1 / 60) {
       Math.min(cover.maxAngle, cover.angle)
     );
 
-    // Apply to pivot — this moves the entire rigid mesh with zero vertex math
+    // Apply to pivot — moves the entire rigid mesh, zero vertex work
     cover.pivot.rotation.y = cover.angle;
 
     const isMoving = Math.abs(cover.angularVelocity) > 0.0001;
@@ -801,8 +802,7 @@ export function applyCoverHinge(cover, springBack = 0.2, dt = 1 / 60) {
  */
 export function applyCoverAngularDrag(cover, deltaX, strength = 5) {
   if (!cover) return;
-  // Front cover: dragging right opens it (angle increases toward π)
-  // Back cover:  dragging left opens it (angle decreases toward 0)
-  const dir = cover.isBack ? -1 : 1;
-  cover.angularVelocity += deltaX * strength * dir;
+  // Both covers open by rotating in the same direction (decreasing angle).
+  // Dragging left (negative deltaX) opens both — front from 0→-π, back from π→0.
+  cover.angularVelocity += deltaX * strength;
 }

@@ -94,14 +94,17 @@ function initBook() {
     z -= 0.01;
   });
 
-  // ── Front cover — sits on top of all pages ─────────────────────────────────
+  // ── Front cover — sits on top of all pages (closed = angle 0, flat face-up)
   frontCover = new CoverGeo(randomId(), 2, 4, 0x8b4513, false);
-  frontCover.pivot.position.set(0, 0, 0.07);
+  frontCover.pivot.position.set(0, 0, 0.07); // just above the page stack
   scene.add(frontCover.pivot);
 
-  // ── Back cover — sits below all pages ─────────────────────────────────────
+  // ── Back cover — sits below all pages (closed = angle 0, flat face-down)
+  // pivot.rotation.y = 0 means it lies flat just like the front cover;
+  // opening it swings it to angle -π (under the book).
   backCover = new CoverGeo(randomId(), 2, 4, 0x8b4513, true);
-  backCover.pivot.position.set(0, 0, -0.07);
+  backCover.pivot.position.set(0, 0, -0.07); // just below the page stack
+  backCover.pivot.rotation.z = Math.PI; // flip so it extends right (not left) at angle=π
   scene.add(backCover.pivot);
 
   // Cover hinge tickers — run every frame, mutate pivot.rotation.y directly
@@ -119,9 +122,9 @@ function initBook() {
   });
 
   // ── Spine ──────────────────────────────────────────────────────────────────
-  const spineGeo = new THREE.CylinderGeometry(0.05, 0.05, 4, 16);
-  const spineMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-  scene.add(new THREE.Mesh(spineGeo, spineMat));
+  // const spineGeo = new THREE.CylinderGeometry(0.05, 0.05, 4, 16);
+  // const spineMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  // scene.add(new THREE.Mesh(spineGeo, spineMat));
 }
 
 scene.add(ambientLight);
@@ -173,26 +176,60 @@ canvas.addEventListener('mousedown', (event) => {
   updateMousePosition(event);
   raycaster.setFromCamera(mouse, camera);
 
-  // ── Test covers first (they sit on the outer z) ───────────────────────────
-  const coverHits = raycaster.intersectObjects([
-    frontCover.plane,
-    backCover.plane,
-  ]);
-  if (coverHits.length) {
-    isDragging = true;
-    selectedCover =
-      coverHits[0].object === frontCover.plane ? frontCover : backCover;
-    grabWorldZ = coverHits[0].point.z;
-    prevMouseWorld.copy(coverHits[0].point);
-    return;
-  }
-
-  // ── Test page wrappers ────────────────────────────────────────────────────
+  // ── Single raycast against everything, pick closest sensible target ────────
+  // Rules:
+  //   • A cover whose Z is ABOVE (closer to camera than) the nearest page hit
+  //     wins — it's physically in front.
+  //   • A closed cover that is BEHIND a page hit loses — the page is on top.
+  //   • If nothing is hit at all, re-enable controls and bail.
   const wrapperMeshes = [...book1.pagesGeo.values()].map(
     (pg) => pg.wrapperMesh
   );
-  const pageHits = raycaster.intersectObjects(wrapperMeshes);
+  const allTargets = [frontCover.plane, backCover.plane, ...wrapperMeshes];
+  const allHits = raycaster.intersectObjects(allTargets);
 
+  if (!allHits.length) {
+    controls.enabled = true;
+    return;
+  }
+
+  // Walk hits in distance order; pick the first cover or page.
+  // A closed cover (within 0.1 rad of its rest angle) is only accepted if no
+  // page hit comes before it (i.e. it is the closest thing under the cursor).
+  const firstPageHit = allHits.find((h) => wrapperMeshes.includes(h.object));
+  const firstCoverHit = allHits.find(
+    (h) => h.object === frontCover.plane || h.object === backCover.plane
+  );
+
+  const frontClosed = Math.abs(frontCover.angle - 0) < 0.1;
+  const backClosed = Math.abs(backCover.angle - Math.PI) < 0.1;
+
+  // Decide if the closest cover hit should win over the closest page hit.
+  let useCover = false;
+  if (firstCoverHit) {
+    const coverObj = firstCoverHit.object;
+    const isClosed = coverObj === frontCover.plane ? frontClosed : backClosed;
+    // Open cover always wins. Closed cover wins only if it's closer than any page.
+    if (!isClosed) {
+      useCover = true;
+    } else if (
+      !firstPageHit ||
+      firstCoverHit.distance < firstPageHit.distance
+    ) {
+      useCover = true;
+    }
+  }
+
+  if (useCover) {
+    isDragging = true;
+    selectedCover =
+      firstCoverHit.object === frontCover.plane ? frontCover : backCover;
+    grabWorldZ = firstCoverHit.point.z;
+    prevMouseWorld.copy(firstCoverHit.point);
+    return;
+  }
+
+  const pageHits = firstPageHit ? [firstPageHit] : [];
   if (!pageHits.length) {
     controls.enabled = true;
     return;
@@ -200,7 +237,7 @@ canvas.addEventListener('mousedown', (event) => {
 
   isDragging = true;
   selectedPageGeo = [...book1.pagesGeo.values()].find(
-    (pg) => pg.wrapperMesh === pageHits[0].object
+    (pg) => pg.wrapperMesh === firstPageHit.object
   );
   if (!selectedPageGeo) {
     controls.enabled = true;
@@ -211,11 +248,11 @@ canvas.addEventListener('mousedown', (event) => {
   const wPos = wGeo.attributes.position;
 
   const localPoint = selectedPageGeo.wrapperMesh.worldToLocal(
-    pageHits[0].point.clone()
+    firstPageHit.point.clone()
   );
   grab.copy(localPoint);
-  grabWorldZ = pageHits[0].point.z;
-  prevMouseWorld.copy(pageHits[0].point);
+  grabWorldZ = firstPageHit.point.z;
+  prevMouseWorld.copy(firstPageHit.point);
 
   grabbedIndexes.length = 0;
   grabbedVertices.clear();
