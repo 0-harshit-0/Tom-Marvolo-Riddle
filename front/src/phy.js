@@ -583,49 +583,117 @@ export function applyForce(geometry, delta, inMotion = false) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Each frame, for every paper vertex, bilinearly interpolates the matching
- * position on the (deformed) wrapper geometry and applies a spring force
- * pulling the paper vertex toward that target.
+ * Each frame, bilinearly interpolates each paper vertex's target position
+ * from the (deformed) wrapper geometry and spring-pulls the paper toward it.
  *
- * Uses its own velocity buffer (wrapperFollowVelocities) so it can co-exist
- * cleanly with applyPageSpringForces on the same paper geometry.
+ * The binding is built lazily on the FIRST call (not in the constructor), so
+ * all translate() calls in initBook have already been applied — guaranteeing
+ * that wrapper rest positions exactly match paper rest positions and the force
+ * on frame 1 is always zero (no snap/rotation on click).
  *
- * @param {THREE.BufferGeometry} paperGeo
- * @param {THREE.BufferGeometry} wrapperGeo
- * @param {Array}  uvMap       output of buildPageToWrapperMap
- * @param {number} stiffness   spring constant (try 120–250)
- * @param {number} damping     velocity retention per frame (0.8–0.92)
- * @param {number} dt          timestep (1/120 feels responsive)
- * @param {number} maxVel      explosion guard
+ * uvMap is accepted as a parameter for API compatibility but is ignored;
+ * the binding is derived directly from live geometry positions instead.
  */
 export function applyWrapperFollow(
   paperGeo,
   wrapperGeo,
-  uvMap,
+  _uvMap, // kept for call-site compatibility, not used
   stiffness = 150,
   damping = 0.88,
   dt = 1 / 120,
   maxVel = 50
 ) {
-  if (!paperGeo || !wrapperGeo || !uvMap) return null;
+  if (!paperGeo || !wrapperGeo) return null;
 
-  // Separate velocity buffer — does not interfere with springVelocities
-  if (!paperGeo.userData.wrapperFollowVelocities) {
-    paperGeo.userData.wrapperFollowVelocities = new Float32Array(
-      paperGeo.attributes.position.count * 3
-    );
+  // Binding built once, on first invocation, after all translates are done.
+  let binding = null;
+
+  function buildBinding() {
+    const wParams = wrapperGeo.parameters;
+    const wSegs = wParams.widthSegments;
+    const hSegs = wParams.heightSegments;
+    const rowSize = wSegs + 1;
+    const wPos = wrapperGeo.attributes.position;
+
+    // Bounds from LIVE wrapper positions — correct regardless of any translates.
+    let xMin = Infinity,
+      xMax = -Infinity;
+    let yMin = Infinity,
+      yMax = -Infinity;
+    for (let i = 0; i < wPos.count; i++) {
+      const x = wPos.getX(i),
+        y = wPos.getY(i);
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+    }
+    const xRange = xMax - xMin || 1;
+    const yRange = yMax - yMin || 1;
+
+    const pPos = paperGeo.attributes.position;
+    const count = pPos.count;
+    const map = new Array(count);
+
+    for (let i = 0; i < count; i++) {
+      // Use LIVE paper positions (same translate applied) for cell lookup.
+      const px = pPos.getX(i);
+      const py = pPos.getY(i);
+
+      const u = Math.max(0, Math.min(1, (px - xMin) / xRange));
+      // THREE.js PlaneGeometry stores rows top→bottom (high Y first), so
+      // row 0 = yMax and last row = yMin.  Flip v so cell 0 = top of wrapper.
+      const v = Math.max(0, Math.min(1, 1 - (py - yMin) / yRange));
+
+      const cx = Math.min(Math.floor(u * wSegs), wSegs - 1);
+      const cy = Math.min(Math.floor(v * hSegs), hSegs - 1);
+
+      const lu = u * wSegs - cx;
+      const lv = v * hSegs - cy;
+
+      map[i] = {
+        indices: [
+          cy * rowSize + cx, // i00
+          cy * rowSize + (cx + 1), // i10
+          (cy + 1) * rowSize + cx, // i01
+          (cy + 1) * rowSize + (cx + 1), // i11
+        ],
+        weights: [(1 - lu) * (1 - lv), lu * (1 - lv), (1 - lu) * lv, lu * lv],
+      };
+    }
+
+    paperGeo.userData.wrapperFollowVelocities = new Float32Array(count * 3);
+    return map;
   }
 
+  // Build hingePinned directly from the paper's hingeX — don't wait for
+  // applyPageSpringForces to create it, since that only runs if springEnabled.
+  // Without this, hinge vertices get pulled by the wrapper spring and the
+  // page rotates on the first click.
+  function buildHingePinned() {
+    const hingeX = paperGeo.userData.hingeX;
+    const orig = paperGeo.userData.original;
+    const pinned = new Set();
+    const count = paperGeo.attributes.position.count;
+    for (let i = 0; i < count; i++) {
+      if (Math.abs(orig[i * 3] - hingeX) < 0.001) pinned.add(i);
+    }
+    return pinned;
+  }
+
+  let hingePinned = null;
+
   return () => {
+    // Build binding and hingePinned on the very first frame — all translates
+    // are done by now.
+    if (!binding) {
+      binding = buildBinding();
+      hingePinned = buildHingePinned();
+    }
+
     const paperPos = paperGeo.attributes.position;
     const wrapperPos = wrapperGeo.attributes.position;
     const vels = paperGeo.userData.wrapperFollowVelocities;
-
-    // hingePinned may not exist until applyPageSpringForces runs on the paper.
-    // Fall back to an empty Set so the hinge still acts as expected via the
-    // wrapper's own spring simulation.
-    const hingePinned = paperGeo.userData.hingePinned || new Set();
-
     const count = paperPos.count;
     const result = new Float32Array(count * 3);
     const mass = paperGeo.userData.mass || 1;
@@ -634,29 +702,25 @@ export function applyWrapperFollow(
     for (let i = 0; i < count; i++) {
       if (hingePinned.has(i)) continue;
 
-      // ── Bilinearly interpolate wrapper position at this paper vertex ──────
-      const { indices, weights } = uvMap[i];
+      // Bilinearly interpolate wrapper's current (deformed) position.
+      const { indices, weights } = binding[i];
       let tx = 0,
         ty = 0,
         tz = 0;
       for (let j = 0; j < 4; j++) {
-        const wi = indices[j];
         const w = weights[j];
+        const wi = indices[j];
         tx += wrapperPos.getX(wi) * w;
         ty += wrapperPos.getY(wi) * w;
         tz += wrapperPos.getZ(wi) * w;
       }
 
-      // ── Spring force: F = k * (target − current) ─────────────────────────
-      const px = paperPos.getX(i);
-      const py = paperPos.getY(i);
-      const pz = paperPos.getZ(i);
+      // Spring: F = k * (target − current)
+      const ax = ((tx - paperPos.getX(i)) * stiffness) / mass;
+      const ay = ((ty - paperPos.getY(i)) * stiffness) / mass;
+      const az = ((tz - paperPos.getZ(i)) * stiffness) / mass;
 
-      const ax = ((tx - px) * stiffness) / mass;
-      const ay = ((ty - py) * stiffness) / mass;
-      const az = ((tz - pz) * stiffness) / mass;
-
-      // ── Semi-implicit Euler + damping ─────────────────────────────────────
+      // Semi-implicit Euler + damping
       let vx = (vels[i * 3] + ax * dt) * damping;
       let vy = (vels[i * 3 + 1] + ay * dt) * damping;
       let vz = (vels[i * 3 + 2] + az * dt) * damping;
@@ -683,4 +747,62 @@ export function applyWrapperFollow(
 
     return { updated: isMoving, result };
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cover hinge physics
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Drives a CoverGeo as a single rigid body rotating around its spine.
+ *
+ * Call applyCoverAngularDrag() when the user drags to inject angular velocity.
+ * Call this function's returned ticker every frame to integrate and apply.
+ *
+ * @param {CoverGeo} cover
+ * @param {number}   springBack   torque pulling cover toward nearest rest angle
+ *                                (0 = free-spinning, 0.3 = snaps open/closed)
+ * @param {number}   dt
+ */
+export function applyCoverHinge(cover, springBack = 0.2, dt = 1 / 60) {
+  if (!cover) return null;
+
+  return () => {
+    // Spring-back: gentle torque toward nearest end stop (0 or π)
+    const nearest = cover.angle < Math.PI / 2 ? cover.minAngle : cover.maxAngle;
+    const springTorque = (nearest - cover.angle) * springBack;
+    cover.angularVelocity += springTorque * dt;
+
+    // Integrate
+    cover.angularVelocity *= cover.angularDamping;
+    cover.angle += cover.angularVelocity * dt;
+
+    // Clamp to [minAngle, maxAngle]
+    cover.angle = Math.max(
+      cover.minAngle,
+      Math.min(cover.maxAngle, cover.angle)
+    );
+
+    // Apply to pivot — this moves the entire rigid mesh with zero vertex math
+    cover.pivot.rotation.y = cover.angle;
+
+    const isMoving = Math.abs(cover.angularVelocity) > 0.0001;
+    return { updated: isMoving, result: null };
+  };
+}
+
+/**
+ * Convert a world-space mouse delta-X into angular velocity on the cover.
+ * Call this from your mousemove handler instead of applyMouseDrag.
+ *
+ * @param {CoverGeo} cover
+ * @param {number}   deltaX   world-space mouse movement this frame
+ * @param {number}   strength multiplier (try 3–8)
+ */
+export function applyCoverAngularDrag(cover, deltaX, strength = 5) {
+  if (!cover) return;
+  // Front cover: dragging right opens it (angle increases toward π)
+  // Back cover:  dragging left opens it (angle decreases toward 0)
+  const dir = cover.isBack ? -1 : 1;
+  cover.angularVelocity += deltaX * strength * dir;
 }

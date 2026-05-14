@@ -142,7 +142,7 @@ class PageGeo {
     this.geometry.userData.hingeX = Math.min(...xs);
     this.geometry.userData.maxX = Math.max(...xs);
 
-    const texture = new THREE.TextureLoader().load('paper.jpg');
+    const texture = new THREE.TextureLoader().load('paper.png');
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
 
@@ -188,6 +188,14 @@ class PageGeo {
       wPos.count * 3
     );
 
+    // this.wrapperMesh = new THREE.Mesh(
+    //   this.wrapperGeometry,
+    //   new THREE.MeshBasicMaterial({
+    //     color: 0x00ffff,
+    //     wireframe: true,
+    //     side: THREE.DoubleSide,
+    //   })
+    // );
     this.wrapperMesh = new THREE.Mesh(
       this.wrapperGeometry,
       new THREE.MeshBasicMaterial({
@@ -220,4 +228,72 @@ class PageGeo {
   }
 }
 
-export { Book, Page, PageGeo };
+/**
+ * CoverGeo — a rigid book cover that rotates around the spine as one solid piece.
+ *
+ * Unlike PageGeo (cloth physics, per-vertex), a cover has no bending at all.
+ * Physics is a single angle + angular velocity: drag anywhere on the cover
+ * and it swings open/closed around hingeX like a real hardcover.
+ *
+ * The cover mesh is a flat plane with a thick appearance via slight Z-offset
+ * and a separate spine-edge strip. Both are parented to a pivot Object3D
+ * sitting at hingeX so rotation is a simple pivot.rotateY(angle).
+ */
+class CoverGeo {
+  constructor(id, width, height, color = 0x8b4513, isBack = false) {
+    this.id = id;
+    this.width = width;
+    this.height = height;
+    this.isBack = isBack; // front cover opens right→left, back opens left→right
+
+    // ── Rigid cover mesh (low poly — it never deforms) ──────────────────────
+    this.geometry = new THREE.PlaneGeometry(width, height, 1, 1);
+    // Translate so the left edge sits at x=0 (the pivot/spine axis)
+    this.geometry.translate(width / 2, 0, 0);
+
+    this.geometry.userData.original = new Float32Array(
+      this.geometry.attributes.position.array
+    );
+    this.geometry.userData.hingeX = 0; // pivot is at world x=0 after translate
+    this.geometry.userData.maxX = width;
+    this.geometry.userData.mass = 10; // covers feel heavier than pages
+
+    // Texture: load cover.png if available, fall back to solid color
+    const texture = new THREE.TextureLoader().load('cover.png');
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+
+    this.material = new THREE.MeshLambertMaterial({
+      map: texture,
+      color, // tint; ignored when texture loads successfully
+      side: THREE.DoubleSide,
+      emissive: 0x0a0a0a,
+    });
+
+    this.plane = new THREE.Mesh(this.geometry, this.material);
+    this.plane.castShadow = true;
+    this.plane.receiveShadow = true;
+
+    // ── Pivot object — rotate this, not the mesh directly ───────────────────
+    // Sits at the spine (x=0 in local space). Rotating pivot.rotation.y
+    // swings the cover open/closed without any vertex deformation.
+    this.pivot = new THREE.Object3D();
+    this.pivot.add(this.plane);
+
+    // ── Rigid-body state (managed by applyCoverHinge in phy.js) ─────────────
+    this.angle = isBack ? Math.PI : 0; // back cover starts "open" (flat)
+    this.angularVelocity = 0;
+    this.angularDamping = 0.88;
+    this.minAngle = 0; // closed (flat on top of book)
+    this.maxAngle = Math.PI; // fully open (flat on other side)
+
+    // Apply initial angle
+    this.pivot.rotation.y = this.angle;
+  }
+
+  info() {
+    return this;
+  }
+}
+
+export { Book, Page, PageGeo, CoverGeo };
