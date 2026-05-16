@@ -45,8 +45,14 @@ const controls = new OrbitControls(camera, canvas);
 
 // scene.background = new THREE.Color('black');
 const textureLoader = new THREE.TextureLoader();
-
 textureLoader.load('assets/bg.png', (texture) => {
+  // 2. Adjust these values to zoom in
+  const zoomLevel = 0.9; // Example: zoom in by 50%
+  texture.repeat.set(zoomLevel, zoomLevel);
+
+  // 3. Center the zoomed texture on the screen
+  texture.offset.set((1 - zoomLevel) / 2, (1 - zoomLevel) / 2 + 0.05);
+
   scene.background = texture;
 });
 
@@ -142,9 +148,10 @@ scene.add(camera);
 initBook();
 controls.update();
 
-bookGroup.rotation.x = -0.5;
-bookGroup.rotation.z = -0.05;
-bookGroup.position.y = -0.5;
+bookGroup.rotation.x = -0.3;
+bookGroup.position.y = -0.3;
+bookGroup.rotation.z = -0.03;
+bookGroup.position.y = 1.5;
 
 // ─── Interaction state ────────────────────────────────────────────────────────
 const raycaster = new THREE.Raycaster();
@@ -210,7 +217,7 @@ canvas.addEventListener('mousedown', (event) => {
     _lastClickTarget === hitPg
   ) {
     // Double-click on a page — open the writer
-    activateWriter(hitPg, scene);
+    activateWriter(hitPg, bookGroup);
     controls.enabled = true;
     _lastClickTime = 0; // reset so triple-click doesn't re-trigger
     return;

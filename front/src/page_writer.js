@@ -37,7 +37,7 @@ const INK_COLOR = '#1a0a00'; // very dark brown — looks like dried ink
 const REPLY_COLOR = '#1a0a00';
 const CURSOR_BLINK = 530; // ms
 const IDLE_SUBMIT = 5000; // ms — auto-submit after this much inactivity
-const FADE_DURATION = 2000; // ms
+const FADE_DURATION = 1500; // ms
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let _active = false;
@@ -51,14 +51,14 @@ let _replyText = ''; // Riddle's response
 let _replyVisible = 0; // how many chars of reply are currently shown
 let _replyTimer = 0; // ms since last char reveal
 
-let _phase = 'idle'; // idle | typing | fadingOut | waiting | fadingIn | showing
+let _phase = 'idle'; // idle | typing | fadingOut | dismissing | waiting | fadingIn | showing
 let _fadeProgress = 0; // 0→1 for fade-out; 1→0 for fade-in
 let _globalAlpha = 1;
 
 let _cursorVisible = true;
 let _lastCursorFlip = 0;
 let _lastKeyTime = 0;
-let _scene = null;
+let _parent = null; // THREE.Object3D to add overlay into (bookGroup)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -104,7 +104,11 @@ function repaintCanvas(alpha) {
   _ctx.textBaseline = 'top';
   _ctx.globalAlpha = alpha;
 
-  if (_phase === 'typing' || _phase === 'fadingOut') {
+  if (
+    _phase === 'typing' ||
+    _phase === 'fadingOut' ||
+    _phase === 'dismissing'
+  ) {
     // Draw user's typed text + blinking cursor
     _ctx.fillStyle = INK_COLOR;
 
@@ -216,7 +220,7 @@ export function isWriterActive() {
  * @param {PageGeo}        pageGeo   the page that was double-clicked
  * @param {THREE.Scene}    scene
  */
-export function activateWriter(pageGeo, scene) {
+export function activateWriter(pageGeo, parent) {
   // If already writing on this page, do nothing
   if (_active && _pageGeo === pageGeo) return;
 
@@ -225,7 +229,7 @@ export function activateWriter(pageGeo, scene) {
 
   _active = true;
   _pageGeo = pageGeo;
-  _scene = scene;
+  _parent = parent;
   _phase = 'typing';
   _typedText = '';
   _replyText = '';
@@ -237,7 +241,7 @@ export function activateWriter(pageGeo, scene) {
   _cursorVisible = true;
 
   _overlayMesh = buildOverlayMesh(pageGeo);
-  scene.add(_overlayMesh);
+  _parent.add(_overlayMesh);
 
   repaintCanvas(1);
 }
@@ -248,8 +252,8 @@ export function activateWriter(pageGeo, scene) {
 export function deactivateWriter() {
   if (!_active) return;
 
-  if (_overlayMesh && _scene) {
-    _scene.remove(_overlayMesh);
+  if (_overlayMesh && _parent) {
+    _parent.remove(_overlayMesh);
     _overlayMesh.geometry.dispose();
     _overlayMesh.material.map.dispose();
     _overlayMesh.material.dispose();
