@@ -77,7 +77,7 @@ function buildPageToWrapperMap(paperGeo, wrapperGeo, wSegs, hSegs) {
 class Book {
   constructor(
     id,
-    name = 'Fliptionary',
+    name = 'Tom Riddle Diary',
     desc = 'santa claus',
     pages = new Map(),
     pagesGeo = new Map()

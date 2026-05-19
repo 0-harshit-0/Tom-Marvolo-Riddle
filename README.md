@@ -1,4 +1,4 @@
-# fliptionary
+# Tom Riddle Diary
 
 ## INSTALL & BUILD
 - navigate to the /front dir.
