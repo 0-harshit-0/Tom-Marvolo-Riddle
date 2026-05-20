@@ -45,13 +45,13 @@ const controls = new OrbitControls(camera, canvas);
 
 // scene.background = new THREE.Color('black');
 const textureLoader = new THREE.TextureLoader();
-textureLoader.load('assets/bg.png', (texture) => {
-  // 2. Adjust these values to zoom in
-  const zoomLevel = 0.9; // Example: zoom in by 50%
-  texture.repeat.set(zoomLevel, zoomLevel);
+textureLoader.load('assets/bg.jpg', (texture) => {
+  // // 2. Adjust these values to zoom in
+  // const zoomLevel = 0.9; // Example: zoom in by 50%
+  // texture.repeat.set(zoomLevel, zoomLevel);
 
-  // 3. Center the zoomed texture on the screen
-  texture.offset.set((1 - zoomLevel) / 2, (1 - zoomLevel) / 2 + 0.05);
+  // // 3. Center the zoomed texture on the screen
+  // texture.offset.set((1 - zoomLevel) / 2, (1 - zoomLevel) / 2 + 0.05);
 
   scene.background = texture;
 });
