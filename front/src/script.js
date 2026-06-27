@@ -22,6 +22,8 @@ import {
   isWriterActive,
 } from '/src/page_writer.js';
 
+
+
 // ─── Canvas / renderer ────────────────────────────────────────────────────────
 const canvas = document.querySelector('#canvas');
 canvas.width = innerWidth;
@@ -32,8 +34,8 @@ const GRAVITY = 0.001;
 const WRAPPER_GRAB_RADIUS = 0.75;
 
 const scene = new THREE.Scene();
-const light = new THREE.DirectionalLight('white', 1);
-const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+const light = new THREE.DirectionalLight('white', 2.5);
+const ambientLight = new THREE.AmbientLight(0xffffff, 2);
 const camera = new THREE.PerspectiveCamera(
   5,
   innerWidth / innerHeight,
@@ -69,6 +71,8 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 controls.target.set(0, 0, 0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.5; // Try 1.2 to 2.0
 
 // ─── Book setup ───────────────────────────────────────────────────────────────
 const book1 = new Book(randomId());
@@ -553,3 +557,16 @@ function wakeUp() {
 }
 
 wakeUp();
+
+
+// where's the music
+const bgMusic = new Audio('assets/harry_potter_hedwigs.mp3');
+bgMusic.loop = true;
+bgMusic.volume = 0.6;
+canvas.addEventListener(
+  'mousedown',
+  () => {
+    bgMusic.play().catch(console.error);
+  },
+  { once: true }
+);
