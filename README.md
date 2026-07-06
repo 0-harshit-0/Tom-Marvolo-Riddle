@@ -1,1 +1,1 @@
-Dumbledore: _Double-click should do-it_
+**Dumbledore:** _Double-click should do-it_
